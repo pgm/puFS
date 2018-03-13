@@ -166,5 +166,5 @@ func TestRmdir(t *testing.T) {
 
 // 	r.Release()
 
-// 	log.Printf("%s", string(buffer))
+// 	fmt.Printf("%s", string(buffer))
 // }
