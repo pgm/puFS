@@ -65,19 +65,29 @@ type ReadableRef interface {
 	Release()
 }
 
-type Node struct {
-	IsDir   bool
-	Size    int64
-	ModTime time.Time
+// type Node struct {
+// 	IsDir   bool
+// 	Size    int64
+// 	ModTime time.Time
 
-	BID  *BlockID
-	URL  string
-	ETag string
+// 	BID  *BlockID
+// 	URL  string
+// 	ETag string
 
-	names map[string]INode // only populated when IsDir set
+// 	names map[string]INode // only populated when IsDir set
 
-	// only populated when IsDir is false
-	Remote   RemoteRef
-	Frozen   FrozenRef
-	Writable WritableRef
+// 	// only populated when IsDir is false
+// 	Remote   RemoteRef
+// 	Frozen   FrozenRef
+// 	Writable WritableRef
+// }
+
+type Node interface {
+	IsDir() bool
+	Size() int64
+	ModTime() time.Time
+
+	Remote() RemoteRef
+	Frozen() FrozenRef
+	Writable() WritableRef
 }

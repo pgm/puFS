@@ -7,6 +7,7 @@ import (
 
 type WriteableStore interface {
 	NewWriteRef() (WritableRef, error)
+	NewFile() (string, error)
 }
 
 type WritableStoreImp struct {
@@ -58,14 +59,23 @@ func (w *WritableRefImp) Release() {
 }
 
 func (w *WritableStoreImp) NewWriteRef() (WritableRef, error) {
-	f, err := ioutil.TempFile(w.path, "dat")
+	name, err := w.NewFile()
 	if err != nil {
 		return nil, err
 	}
-	name := f.Name()
-	f.Close()
 	return NewWritableRefImp(name), nil
 }
+
+func (w *WritableStoreImp) NewFile() (string, error) {
+	f, err := ioutil.TempFile(w.path, "dat")
+	if err != nil {
+		return "", err
+	}
+	name := f.Name()
+	f.Close()
+	return name, nil
+}
+
 func NewWritableStore(path string) WriteableStore {
 	return &WritableStoreImp{path}
 }

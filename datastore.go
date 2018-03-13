@@ -1,94 +1,115 @@
 package sply2
 
+import bolt "github.com/coreos/bbolt"
+
 type DataStore struct {
 	path          string
 	db            *INodeDB
 	writableStore WriteableStore
-	// # internal
-	//    promote_remote_to_frozen(remote_ref) -> FrozenRef
-	//    promote_frozen_to_writable(FrozenRef) -> WriteRef
-
-	//    get_remote_ref(inode) -> RemoteRef
-	//    get_frozen_ref(inode) -> FrozenRef
-	// #public
-	//    # write ops
-	//    make_dir(parent_inode) -> inode
-	//    create_writable(parent_inode) -> inode
-	//    push(inode)
-
-	//    # read ops
-	//    get_child_inode(parent_inode, name) -> inode
-	//    get_stat(inode) -> StatObj
-	//    get_dir_contents(inode) -> list of string
-
-	//    get_local_readable(inode) -> ReadableRef
-	//    get_local_writable(inode) -> WritableRef
-	//    get_frozen_block_id(inode) -> block_id
-	// }
 }
 
 func NewDataStore(path string) *DataStore {
-	return &DataStore{path: path, db: NewINodeDB(), writableStore: NewWritableStore(path)}
+	dbFilename := path + "/db"
+	return &DataStore{path: path, db: NewINodeDB(dbFilename, 1000), writableStore: NewWritableStore(path)}
+}
+
+func (d *DataStore) Close() {
+	d.db.Close()
 }
 
 func (d *DataStore) GetDirContents(id INode) ([]string, error) {
-	return d.db.GetDirContents(id)
+	var names []string
+	var err error
+
+	err = d.db.view(func(tx *bolt.Tx) error {
+		names, err = d.db.GetDirContents(tx, id)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return names, nil
 }
 
 func (d *DataStore) MakeDir(parent INode, name string) (INode, error) {
-	id, _, err := d.db.AddNode(parent, name, true)
-	return id, err
+	var err error
+	var inode INode
+
+	err = d.db.update(func(tx *bolt.Tx) error {
+		inode, err = d.db.AddDir(tx, parent, name)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	return inode, err
 }
 
-func (d *DataStore) AddRemoteURL(parent INode, name string, URL string) (INode, error) {
-	id, _, err := d.db.AddRemoteURL(parent, name, URL)
-	return id, err
+func (d *DataStore) Remove(parent INode, name string) error {
+	var err error
+
+	err = d.db.update(func(tx *bolt.Tx) error {
+		err = d.db.RemoveNode(tx, parent, name)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	return err
 }
+
+// func (d *DataStore) AddRemoteURL(parent INode, name string, URL string) (INode, error) {
+// 	id, _, err := d.db.AddRemoteURL(parent, name, URL)
+// 	return id, err
+// }
 
 func (d *DataStore) CreateWritable(parent INode, name string) (INode, WritableRef, error) {
-	id, node, err := d.db.AddNode(parent, name, false)
+	var inode INode
+	var filename string
+	var err error
+
+	err = d.db.update(func(tx *bolt.Tx) error {
+		filename, err = d.writableStore.NewFile()
+		if err != nil {
+			return err
+		}
+
+		inode, err = d.db.AddWritableLocalFile(tx, parent, name, filename)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
 	if err != nil {
 		return InvalidINode, nil, err
 	}
 
-	writable, err := d.writableStore.NewWriteRef()
-	if err != nil {
-		return InvalidINode, nil, err
-	}
-
-	node.Writable = writable
-
-	return id, writable, err
+	return inode, &WritableRefImp{filename}, err
 }
 
-func (d *DataStore) GetReadRef(childINode INode) (INode, ReadableRef, error) {
-	// parentNode, ok := d.db.db[parent]
-	// if !ok {
-	// 	return InvalidINode, nil, NoSuchNodeErr
-	// }
+func (d *DataStore) GetReadRef(inode INode) (ReadableRef, error) {
+	var filename string
 
-	// childINode, ok := parentNode.names[name]
-	// if !ok {
-	// 	return InvalidINode, nil, InvalidFilenameErr
-	// }
-
-	childNode, ok := d.db.db[childINode]
-	if !ok {
-		panic("Invalid child inode")
-	}
-
-	if childNode.Writable != nil {
-		return childINode, childNode.Writable, nil
-	}
-
-	err := d.ensureFrozenPopulated(childNode)
+	err := d.db.view(func(tx *bolt.Tx) error {
+		node, err := getNodeRepr(tx, inode)
+		if err != nil {
+			return err
+		}
+		filename = node.LocalWritablePath
+		return nil
+	})
 	if err != nil {
-		return childINode, nil, err
+		return nil, err
 	}
 
-	return childINode, childNode.Frozen, nil
-
-	// if childNode.Writable != nil {
-
-	// }
+	return &WritableRefImp{filename}, nil
 }
