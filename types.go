@@ -9,8 +9,8 @@ type INode uint32
 type BlockID [32]byte
 
 type Freezer interface {
-	GetRef(BlockID) (error, FrozenRef)
-	AddBlock(BlockID, remoteRef RemoteRef) error
+	GetRef(BID BlockID) (FrozenRef, error)
+	AddBlock(BID BlockID, remoteRef RemoteRef) error
 }
 
 // type MemFreezer struct {
@@ -49,7 +49,7 @@ type FrozenRef interface {
 // }
 
 type RemoteRef interface {
-	// GetLength() int64
+	GetSize() int64
 	Copy(offset int64, len int64, writer io.Writer) error
 	// Release()
 }

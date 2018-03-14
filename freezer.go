@@ -1,5 +1,11 @@
 package sply2
 
+import (
+	"encoding/hex"
+	"fmt"
+	"os"
+)
+
 // func (d *DataStore) ensureFrozenPopulated(node *Node) error {
 // 	if node.Frozen != nil {
 // 		return nil
@@ -20,9 +26,9 @@ package sply2
 // 	return nil
 // }
 
-// func NewFrozenRef(name string) FrozenRef {
-// 	return &FrozenRefImp{name}
-// }
+func NewFrozenRef(name string) FrozenRef {
+	return &FrozenRefImp{name}
+}
 
 // func (d *DataStore) freeze(node *Node) (FrozenRef, error) {
 // 	f, err := ioutil.TempFile(d.path, "frozen")
@@ -41,26 +47,70 @@ package sply2
 // 	return x, nil
 // }
 
-// type FrozenRefImp struct {
-// 	filename string
-// }
+type FrozenRefImp struct {
+	filename string
+}
 
-// func (w *FrozenRefImp) Read(offset int64, dest []byte) (int, error) {
-// 	f, err := os.OpenFile(w.filename, os.O_RDONLY, 0755)
-// 	if err != nil {
-// 		return 0, err
-// 	}
+func (w *FrozenRefImp) Read(offset int64, dest []byte) (int, error) {
+	f, err := os.OpenFile(w.filename, os.O_RDONLY, 0755)
+	if err != nil {
+		return 0, err
+	}
 
-// 	defer f.Close()
+	defer f.Close()
 
-// 	_, err = f.Seek(offset, 0)
-// 	if err != nil {
-// 		return 0, err
-// 	}
+	_, err = f.Seek(offset, 0)
+	if err != nil {
+		return 0, err
+	}
 
-// 	return f.Read(dest)
-// }
+	return f.Read(dest)
+}
 
-// func (w *FrozenRefImp) Release() {
+func (w *FrozenRefImp) Release() {
 
-// }
+}
+
+type FreezerImp struct {
+	path string
+	//	blocks map[BlockID]string
+}
+
+func NewFreezer(path string) *FreezerImp {
+	return &FreezerImp{path}
+}
+
+func (f *FreezerImp) getPath(BID BlockID) string {
+	filename := fmt.Sprintf("%s/%s", f.path, hex.EncodeToString(BID[:]))
+	return filename
+}
+
+func (f *FreezerImp) GetRef(BID BlockID) (FrozenRef, error) {
+	filename := f.getPath(BID)
+	_, err := os.Stat(filename)
+	if os.IsNotExist(err) {
+		fmt.Printf("Path %s does not exists\n", filename)
+		return nil, nil
+	}
+	fmt.Printf("Path %s exists\n", filename)
+
+	return &FrozenRefImp{filename}, nil
+}
+
+func (f *FreezerImp) AddBlock(BID BlockID, remoteRef RemoteRef) error {
+	filename := f.getPath(BID)
+
+	fi, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+
+	defer fi.Close()
+
+	err = remoteRef.Copy(0, remoteRef.GetSize(), fi)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}

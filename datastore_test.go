@@ -1,6 +1,7 @@
 package sply2
 
 import (
+	"fmt"
 	"io/ioutil"
 	"testing"
 
@@ -148,23 +149,23 @@ func TestRmdir(t *testing.T) {
 // 	require.Equal(NoSuchNodeErr, err)
 // }
 
-// func TestRemote(t *testing.T) {
-// 	url := "https://developer.mozilla.org/en-US/"
+func TestRemote(t *testing.T) {
+	url := "https://developer.mozilla.org/en-US/"
+	fmt.Printf("err\n")
+	require := require.New(t)
+	d := testDataStore()
 
-// 	require := require.New(t)
-// 	d := testDataStore()
+	fileID, err := d.AddRemoteURL(RootINode, "remote", url)
+	require.Nil(err)
 
-// 	fileID, err := d.AddRemoteURL(RootINode, "remote", url)
-// 	require.Nil(err)
+	r, err := d.GetReadRef(fileID)
+	require.Nil(err)
 
-// 	_, r, err := d.GetReadRef(fileID)
-// 	require.Nil(err)
+	buffer := make([]byte, 500)
+	_, err = r.Read(0, buffer)
+	require.Nil(err)
 
-// 	buffer := make([]byte, 500)
-// 	_, err = r.Read(0, buffer)
-// 	require.Nil(err)
-
-// 	r.Release()
-
-// 	fmt.Printf("%s", string(buffer))
-// }
+	r.Release()
+	require.Equal("HTML", string(buffer))
+	fmt.Printf("%s", string(buffer))
+}

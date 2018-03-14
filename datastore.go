@@ -1,16 +1,30 @@
 package sply2
 
-import bolt "github.com/coreos/bbolt"
+import (
+	"fmt"
+	"log"
+	"os"
+	"time"
+
+	bolt "github.com/coreos/bbolt"
+)
 
 type DataStore struct {
 	path          string
 	db            *INodeDB
+	freezer       Freezer
 	writableStore WriteableStore
+	locker        *INodeLocker
 }
 
 func NewDataStore(path string) *DataStore {
 	dbFilename := path + "/db"
-	return &DataStore{path: path, db: NewINodeDB(dbFilename, 1000), writableStore: NewWritableStore(path)}
+	freezerPath := path + "/freezer"
+	err := os.MkdirAll(freezerPath, 0700)
+	if err != nil {
+		log.Fatalf("%s: Could not create %s\n", err, freezerPath)
+	}
+	return &DataStore{path: path, db: NewINodeDB(dbFilename, 1000), writableStore: NewWritableStore(path), freezer: NewFreezer(freezerPath)}
 }
 
 func (d *DataStore) Close() {
@@ -37,6 +51,9 @@ func (d *DataStore) GetDirContents(id INode) ([]string, error) {
 }
 
 func (d *DataStore) MakeDir(parent INode, name string) (INode, error) {
+	d.locker.RLock(parent)
+	defer d.locker.RUnlock(parent)
+
 	var err error
 	var inode INode
 
@@ -65,10 +82,32 @@ func (d *DataStore) Remove(parent INode, name string) error {
 	return err
 }
 
-// func (d *DataStore) AddRemoteURL(parent INode, name string, URL string) (INode, error) {
-// 	id, _, err := d.db.AddRemoteURL(parent, name, URL)
-// 	return id, err
-// }
+func (d *DataStore) AddRemoteURL(parent INode, name string, URL string) (INode, error) {
+	var inode INode
+	var err error
+
+	etag, size, err := getURLAttr(URL)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	modTime := time.Now()
+
+	err = d.db.update(func(tx *bolt.Tx) error {
+		inode, err = d.db.AddRemoteURL(tx, parent, name, URL, etag, size, modTime)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	return inode, err
+}
 
 func (d *DataStore) CreateWritable(parent INode, name string) (INode, WritableRef, error) {
 	var inode INode
@@ -97,19 +136,49 @@ func (d *DataStore) CreateWritable(parent INode, name string) (INode, WritableRe
 }
 
 func (d *DataStore) GetReadRef(inode INode) (ReadableRef, error) {
-	var filename string
+	var node *NodeRepr
+	var err error
 
-	err := d.db.view(func(tx *bolt.Tx) error {
-		node, err := getNodeRepr(tx, inode)
+	err = d.db.view(func(tx *bolt.Tx) error {
+		node, err = getNodeRepr(tx, inode)
 		if err != nil {
 			return err
 		}
-		filename = node.LocalWritablePath
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return &WritableRefImp{filename}, nil
+	if node.IsDir {
+		return nil, IsDirErr
+	}
+
+	if node.LocalWritablePath != "" {
+		return &WritableRefImp{node.LocalWritablePath}, nil
+	}
+
+	fmt.Printf("Getting ref\n")
+	ref, err := d.freezer.GetRef(node.BID)
+	fmt.Printf("Got ref: %s %s\n", ref, err)
+	if ref == nil && err == nil {
+		// do we have a remote to pull
+		err := d.pullAndFreeze(node)
+		if err != nil {
+			return nil, err
+		}
+
+		ref, err = d.freezer.GetRef(node.BID)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return ref, nil
+}
+
+func (d *DataStore) pullAndFreeze(node *NodeRepr) error {
+	remote := &RemoteURL{URL: node.URL, ETag: node.ETag, Length: node.Size}
+	return d.freezer.AddBlock(node.BID, remote)
 }

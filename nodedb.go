@@ -2,6 +2,7 @@ package sply2
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
@@ -26,9 +27,12 @@ type INodeDB struct {
 }
 
 type NodeRepr struct {
-	IsDir   bool
-	Size    int64
-	ModTime time.Time
+	IsDir    bool
+	IsFrozen bool
+	Size     int64
+	ModTime  time.Time
+
+	BID BlockID
 
 	// Fields for Remote URL
 	URL  string
@@ -38,9 +42,6 @@ type NodeRepr struct {
 	Bucket     string
 	Key        string
 	Generation int64
-
-	// only populated for data fetched from remote
-	LocalFrozenPath string
 
 	// only populated for writable file (implies IsDir is false, and remote fields blank)
 	LocalWritablePath string
@@ -148,6 +149,7 @@ func (db *INodeDB) getNextFreeInode(tx *bolt.Tx) (INode, error) {
 		}
 
 		binary.LittleEndian.PutUint32(idBytes, uint32(id))
+
 		if b.Get(idBytes) == nil {
 			return id, nil
 		}
@@ -246,8 +248,14 @@ func (db *INodeDB) AddDir(tx *bolt.Tx, parent INode, name string) (INode, error)
 		return InvalidINode, err
 	}
 
-	addEmptyDir(tx, id)
-	addChild(tx, parent, id, name)
+	err = addEmptyDir(tx, id)
+	if err != nil {
+		return InvalidINode, err
+	}
+	err = addChild(tx, parent, id, name)
+	if err != nil {
+		return InvalidINode, err
+	}
 
 	return id, nil
 }
@@ -314,22 +322,37 @@ func addChild(tx *bolt.Tx, parent INode, inode INode, name string) error {
 	return nb.Put(key, inodeBytes)
 }
 
-// func (db *INodeDB) AddRemoteURL(tx *bolt.Tx, parent INode, name string, url string, etag string, size int64, ModTime time.Time) (INode, error) {
-// 	err := assertValidDir(parent)
-// 	if err != nil {
-// 		return InvalidINode, err
-// 	}
+func (db *INodeDB) AddRemoteURL(tx *bolt.Tx, parent INode, name string, url string, etag string, size int64, ModTime time.Time) (INode, error) {
+	err := assertValidDir(tx, parent)
+	if err != nil {
+		return InvalidINode, err
+	}
 
-// 	id, err := db.getNextFreeInode(tx)
-// 	if err != nil {
-// 		return InvalidINode, err
-// 	}
+	id, err := db.getNextFreeInode(tx)
+	if err != nil {
+		return InvalidINode, err
+	}
 
-// 	addRemoteURL(tx, id, url, etag, size, ModTime)
-// 	addChild(tx, parent, id, name)
+	err = addRemoteURL(tx, id, url, etag, size, ModTime)
+	if err != nil {
+		return InvalidINode, err
+	}
+	err = addChild(tx, parent, id, name)
+	if err != nil {
+		return InvalidINode, err
+	}
 
-// 	return id, nil
-// }
+	return id, nil
+}
+
+var Sha256 = sha256.New()
+
+func addRemoteURL(tx *bolt.Tx, inode INode, url string, etag string, size int64, modTime time.Time) error {
+	hashID := Sha256.Sum([]byte(url + etag))
+	var BID BlockID
+	copy(BID[:], hashID)
+	return putNodeRepr(tx, inode, &NodeRepr{IsDir: false, URL: url, ETag: etag, Size: size, ModTime: modTime, BID: BID})
+}
 
 // func (db *INodeDB) AddRemoteObject(tx *bolt.Tx, parent INode, name string, bucket string, key string, size int64, ModTime time.Time) (INode, error) {
 // 	err := assertValidDir(parent)
@@ -363,8 +386,14 @@ func (db *INodeDB) AddWritableLocalFile(tx *bolt.Tx, parent INode, name string, 
 		return InvalidINode, err
 	}
 
-	addWritable(tx, id, filename)
-	addChild(tx, parent, id, name)
+	err = addWritable(tx, id, filename)
+	if err != nil {
+		return InvalidINode, err
+	}
+	err = addChild(tx, parent, id, name)
+	if err != nil {
+		return InvalidINode, err
+	}
 
 	return id, nil
 }
