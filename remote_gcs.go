@@ -18,7 +18,10 @@ type RemoteGCS struct {
 
 func (r *RemoteGCS) Copy(offset int64, len int64, writer io.Writer) error {
 	ctx := context.Background()
-	objHandle := r.Bucket.Object(r.Key).If(storage.Conditions{GenerationMatch: r.Generation})
+	objHandle := r.Bucket.Object(r.Key)
+	if r.Generation != 0 {
+		objHandle = objHandle.If(storage.Conditions{GenerationMatch: r.Generation})
+	}
 
 	var reader io.ReadCloser
 	var err error
@@ -42,6 +45,10 @@ func (r *RemoteGCS) Copy(offset int64, len int64, writer io.Writer) error {
 	}
 
 	return nil
+}
+
+func (r *RemoteGCS) GetSize() int64 {
+	return r.Size
 }
 
 func NewRemoteObject(client *storage.Client, bucketName string, key string) (*RemoteGCS, error) {

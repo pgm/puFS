@@ -61,18 +61,3 @@ func getURLAttr(url string) (string, int64, error) {
 
 	return etag, contentlength, nil
 }
-
-// func ensureRemotePopulated(node *Node) error {
-// 	if node.Remote != nil {
-// 		return nil
-// 	}
-
-// 	remote, etag, size, err := NewRemoteURL(node.URL)
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	node.Remote, node.ETag, node.Size = remote, etag, size
-
-// 	return nil
-// }

@@ -27,10 +27,10 @@ type INodeDB struct {
 }
 
 type NodeRepr struct {
-	IsDir    bool
-	IsFrozen bool
-	Size     int64
-	ModTime  time.Time
+	ParentINode INode
+	IsDir       bool
+	Size        int64
+	ModTime     time.Time
 
 	BID BlockID
 
@@ -112,7 +112,7 @@ func NewINodeDB(filename string, maxINodes uint32) *INodeDB {
 			log.Fatal(err)
 		}
 
-		err = addEmptyDir(tx, RootINode)
+		err = addEmptyDir(tx, RootINode, RootINode)
 
 		if err != nil {
 			log.Fatal(err)
@@ -181,7 +181,7 @@ func (db *INodeDB) isEmptyDir(tx *bolt.Tx, inode INode) (bool, error) {
 }
 
 func (db *INodeDB) RemoveNode(tx *bolt.Tx, parent INode, name string) error {
-	err := assertValidDir(tx, parent)
+	err := assertValidDir(tx, parent, true)
 	if err != nil {
 		return err
 	}
@@ -224,21 +224,35 @@ func (db *INodeDB) RemoveNode(tx *bolt.Tx, parent INode, name string) error {
 	return nil
 }
 
-func assertValidDir(tx *bolt.Tx, parent INode) error {
-	isDir, err := isDir(tx, parent)
+func assertValidDir(tx *bolt.Tx, id INode, invalidateBID bool) error {
+	node, err := getNodeRepr(tx, id)
 	if err != nil {
 		return err
 	}
 
-	if !isDir {
+	if !node.IsDir {
 		return NotDirErr
+	}
+
+	// if we need to invalidate the block ID, recurse to the top of the tree
+	if invalidateBID {
+		if node.BID != NABlock {
+			node.BID = NABlock
+			putNodeRepr(tx, id, node)
+			if node.ParentINode != RootINode {
+				err := assertValidDir(tx, node.ParentINode, true)
+				if err != nil {
+					return err
+				}
+			}
+		}
 	}
 
 	return nil
 }
 
 func (db *INodeDB) AddDir(tx *bolt.Tx, parent INode, name string) (INode, error) {
-	err := assertValidDir(tx, parent)
+	err := assertValidDir(tx, parent, true)
 	if err != nil {
 		return InvalidINode, err
 	}
@@ -248,7 +262,7 @@ func (db *INodeDB) AddDir(tx *bolt.Tx, parent INode, name string) (INode, error)
 		return InvalidINode, err
 	}
 
-	err = addEmptyDir(tx, id)
+	err = addEmptyDir(tx, parent, id)
 	if err != nil {
 		return InvalidINode, err
 	}
@@ -260,8 +274,8 @@ func (db *INodeDB) AddDir(tx *bolt.Tx, parent INode, name string) (INode, error)
 	return id, nil
 }
 
-func addEmptyDir(tx *bolt.Tx, inode INode) error {
-	return putNodeRepr(tx, inode, &NodeRepr{ModTime: time.Now(), IsDir: true})
+func addEmptyDir(tx *bolt.Tx, parentINode INode, inode INode) error {
+	return putNodeRepr(tx, inode, &NodeRepr{ParentINode: parentINode, ModTime: time.Now(), IsDir: true})
 }
 
 func splitChildKey(key []byte) (INode, string) {
@@ -297,7 +311,7 @@ func makeChildKey(inode INode, name string) []byte {
 }
 
 func (db *INodeDB) GetNode(tx *bolt.Tx, parent INode, name string) (*NodeRepr, error) {
-	err := assertValidDir(tx, parent)
+	err := assertValidDir(tx, parent, false)
 	if err != nil {
 		return nil, err
 	}
@@ -323,7 +337,7 @@ func addChild(tx *bolt.Tx, parent INode, inode INode, name string) error {
 }
 
 func (db *INodeDB) AddRemoteURL(tx *bolt.Tx, parent INode, name string, url string, etag string, size int64, ModTime time.Time) (INode, error) {
-	err := assertValidDir(tx, parent)
+	err := assertValidDir(tx, parent, true)
 	if err != nil {
 		return InvalidINode, err
 	}
@@ -333,7 +347,7 @@ func (db *INodeDB) AddRemoteURL(tx *bolt.Tx, parent INode, name string, url stri
 		return InvalidINode, err
 	}
 
-	err = addRemoteURL(tx, id, url, etag, size, ModTime)
+	err = addRemoteURL(tx, parent, id, url, etag, size, ModTime)
 	if err != nil {
 		return InvalidINode, err
 	}
@@ -347,11 +361,11 @@ func (db *INodeDB) AddRemoteURL(tx *bolt.Tx, parent INode, name string, url stri
 
 var Sha256 = sha256.New()
 
-func addRemoteURL(tx *bolt.Tx, inode INode, url string, etag string, size int64, modTime time.Time) error {
+func addRemoteURL(tx *bolt.Tx, parentINode INode, inode INode, url string, etag string, size int64, modTime time.Time) error {
 	hashID := Sha256.Sum([]byte(url + etag))
 	var BID BlockID
 	copy(BID[:], hashID)
-	return putNodeRepr(tx, inode, &NodeRepr{IsDir: false, URL: url, ETag: etag, Size: size, ModTime: modTime, BID: BID})
+	return putNodeRepr(tx, inode, &NodeRepr{ParentINode: parentINode, IsDir: false, URL: url, ETag: etag, Size: size, ModTime: modTime, BID: BID})
 }
 
 // func (db *INodeDB) AddRemoteObject(tx *bolt.Tx, parent INode, name string, bucket string, key string, size int64, ModTime time.Time) (INode, error) {
@@ -371,12 +385,12 @@ func addRemoteURL(tx *bolt.Tx, inode INode, url string, etag string, size int64,
 // 	return id, nil
 // }
 
-func addWritable(tx *bolt.Tx, inode INode, filename string) error {
-	return putNodeRepr(tx, inode, &NodeRepr{IsDir: false, LocalWritablePath: filename})
+func addWritable(tx *bolt.Tx, parentINode INode, inode INode, filename string) error {
+	return putNodeRepr(tx, inode, &NodeRepr{ParentINode: parentINode, IsDir: false, LocalWritablePath: filename})
 }
 
 func (db *INodeDB) AddWritableLocalFile(tx *bolt.Tx, parent INode, name string, filename string) (INode, error) {
-	err := assertValidDir(tx, parent)
+	err := assertValidDir(tx, parent, true)
 	if err != nil {
 		return InvalidINode, err
 	}
@@ -386,7 +400,7 @@ func (db *INodeDB) AddWritableLocalFile(tx *bolt.Tx, parent INode, name string, 
 		return InvalidINode, err
 	}
 
-	err = addWritable(tx, id, filename)
+	err = addWritable(tx, parent, id, filename)
 	if err != nil {
 		return InvalidINode, err
 	}
@@ -398,21 +412,40 @@ func (db *INodeDB) AddWritableLocalFile(tx *bolt.Tx, parent INode, name string, 
 	return id, nil
 }
 
-func (db *INodeDB) GetDirContents(tx *bolt.Tx, id INode) ([]string, error) {
-	err := assertValidDir(tx, id)
+type NameINode struct {
+	Name string
+	ID   INode
+}
+
+func (db *INodeDB) GetDirNames(tx *bolt.Tx, id INode) ([]string, error) {
+	nn, err := db.GetDirContents(tx, id)
 	if err != nil {
 		return nil, err
 	}
 
 	names := make([]string, 0, 100)
+	for _, t := range nn {
+		names = append(names, t.Name)
+	}
+
+	return names, nil
+}
+
+func (db *INodeDB) GetDirContents(tx *bolt.Tx, id INode) ([]NameINode, error) {
+	err := assertValidDir(tx, id, false)
+	if err != nil {
+		return nil, err
+	}
+
+	names := make([]NameINode, 0, 100)
 	prefix := make([]byte, 4)
 	binary.LittleEndian.PutUint32(prefix, uint32(id))
 
 	c := tx.Bucket(ChildNodeBucket).Cursor()
 
-	for k, _ := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
+	for k, v := c.Seek(prefix); k != nil && bytes.HasPrefix(k, prefix); k, _ = c.Next() {
 		name := string(k[len(prefix):])
-		names = append(names, name)
+		names = append(names, NameINode{Name: name, ID: INode(binary.LittleEndian.Uint32(v))})
 	}
 
 	if err != nil {

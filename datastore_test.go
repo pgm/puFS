@@ -70,6 +70,60 @@ func TestWriteRead(t *testing.T) {
 	require.Equal("data", string(buffer))
 }
 
+func TestFreezeFile(t *testing.T) {
+	require := require.New(t)
+
+	d := testDataStore()
+
+	aID := createFile(require, d, RootINode, "a", "data")
+
+	BID, err := d.Freeze(aID)
+	require.Nil(err)
+
+	r, err := d.GetReadRef(aID)
+	require.Nil(err)
+
+	buffer := make([]byte, 4)
+	_, err = r.Read(0, buffer)
+	require.Nil(err)
+
+	r.Release()
+
+	require.Equal("data", string(buffer))
+
+	// now verify this is the same thing that's in the freezer
+	r, err = d.freezer.GetRef(BID)
+	require.Nil(err)
+	_, err = r.Read(0, buffer)
+	require.Equal("data", string(buffer))
+}
+
+func TestFreezeDir(t *testing.T) {
+	require := require.New(t)
+
+	d := testDataStore()
+
+	aID, err := d.MakeDir(RootINode, "a")
+	require.Nil(err)
+
+	aBID1, err := d.Freeze(aID)
+	require.Nil(err)
+
+	// calling freeze twice should yield same blockID
+	aBID2, err := d.Freeze(aID)
+	require.Nil(err)
+	require.Equal(aBID1, aBID2)
+
+	// now mutate a, which should clear the blockID
+	_, err = d.MakeDir(aID, "b")
+	require.Nil(err)
+
+	// and freezing should yield a different id
+	aBID3, err := d.Freeze(aID)
+	require.Nil(err)
+	require.NotEqual(aBID1, aBID3)
+}
+
 func TestRootDirListing(t *testing.T) {
 	require := require.New(t)
 	d := testDataStore()
