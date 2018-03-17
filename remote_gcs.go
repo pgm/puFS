@@ -62,12 +62,3 @@ func NewRemoteObject(client *storage.Client, bucketName string, key string) (*Re
 
 	return &RemoteGCS{Bucket: bucket, Key: key, Generation: attr.Generation, Size: attr.Size}, nil
 }
-
-// ctx := context.Background()
-// projectID := "YOUR_PROJECT_ID"
-
-// // Creates a client.
-// client, err := storage.NewClient(ctx)
-// if err != nil {
-// 	log.Fatalf("Failed to create client: %v", err)
-// }
