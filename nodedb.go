@@ -43,6 +43,8 @@ type NodeRepr struct {
 	Key        string
 	Generation int64
 
+	IsDeferredChildFetch bool
+
 	// only populated for writable file (implies IsDir is false, and remote fields blank)
 	LocalWritablePath string
 }
@@ -251,6 +253,86 @@ func assertValidDir(tx *bolt.Tx, id INode, invalidateBID bool) error {
 	return nil
 }
 
+func (db *INodeDB) addBlockLazyChildren(tx *bolt.Tx, parent INode, children []DirEntry) error {
+	for _, child := range children {
+		newNodeID, err := db.getNextFreeInode(tx)
+		if err != nil {
+			return err
+		}
+		err = putNodeRepr(tx, newNodeID, &NodeRepr{ParentINode: parent,
+			IsDir:                child.IsDir,
+			Size:                 child.Size,
+			ModTime:              child.ModTime,
+			BID:                  child.BID,
+			URL:                  child.URL,
+			ETag:                 child.ETag,
+			Bucket:               child.Bucket,
+			Key:                  child.Key,
+			Generation:           child.Generation,
+			IsDeferredChildFetch: child.IsDir})
+		if err != nil {
+			return err
+		}
+		err = addChild(tx, parent, newNodeID, child.Name)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (db *INodeDB) addRemoteLazyChildren(tx *bolt.Tx, parent INode, children []*RemoteFile) error {
+	for _, child := range children {
+		newNodeID, err := db.getNextFreeInode(tx)
+		if err != nil {
+			return err
+		}
+		err = putNodeRepr(tx, newNodeID, &NodeRepr{ParentINode: parent,
+			IsDir:                child.IsDir,
+			Size:                 child.Size,
+			ModTime:              child.ModTime,
+			Bucket:               child.Bucket,
+			Key:                  child.Key,
+			Generation:           child.Generation,
+			IsDeferredChildFetch: child.IsDir})
+		if err != nil {
+			return err
+		}
+		err = addChild(tx, parent, newNodeID, child.Name)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (db *INodeDB) MutateBIDForMount(tx *bolt.Tx, id INode, BID BlockID) error {
+	err := assertValidDir(tx, id, true)
+	if err != nil {
+		return err
+	}
+
+	children, err := db.GetDirContents(tx, id)
+	if err != nil {
+		return err
+	}
+
+	// only allow empty directories as mount points to avoid worrying about children that would
+	// otherwise need to be cleaned out before mounting takes place.
+	if len(children) > 0 {
+		return DirNotEmptyErr
+	}
+
+	node, err := getNodeRepr(tx, id)
+	if err != nil {
+		return err
+	}
+
+	node.BID = BID
+	err = putNodeRepr(tx, id, node)
+	return err
+}
+
 func (db *INodeDB) AddDir(tx *bolt.Tx, parent INode, name string) (INode, error) {
 	err := assertValidDir(tx, parent, true)
 	if err != nil {
@@ -311,19 +393,29 @@ func makeChildKey(inode INode, name string) []byte {
 }
 
 func (db *INodeDB) GetNode(tx *bolt.Tx, parent INode, name string) (*NodeRepr, error) {
-	err := assertValidDir(tx, parent, false)
+	id, err := db.GetNodeID(tx, parent, name)
 	if err != nil {
 		return nil, err
+	}
+
+	return getNodeRepr(tx, id)
+}
+
+func (db *INodeDB) GetNodeID(tx *bolt.Tx, parent INode, name string) (INode, error) {
+	err := assertValidDir(tx, parent, false)
+	if err != nil {
+		return InvalidINode, err
 	}
 
 	key := makeChildKey(parent, name)
 	cn := tx.Bucket(ChildNodeBucket)
 
 	value := cn.Get(key)
+	if value == nil {
+		return InvalidINode, NoSuchNodeErr
+	}
 
-	inode := INode(binary.LittleEndian.Uint32(value))
-
-	return getNodeRepr(tx, inode)
+	return INode(binary.LittleEndian.Uint32(value)), nil
 }
 
 func addChild(tx *bolt.Tx, parent INode, inode INode, name string) error {
@@ -334,6 +426,49 @@ func addChild(tx *bolt.Tx, parent INode, inode INode, name string) error {
 
 	nb := tx.Bucket(ChildNodeBucket)
 	return nb.Put(key, inodeBytes)
+}
+
+func (db *INodeDB) AddRemoteGCS(tx *bolt.Tx, parent INode, name string, bucket string, key string, generation int64, size int64, ModTime time.Time, isDir bool) (INode, error) {
+	err := assertValidDir(tx, parent, true)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	id, err := db.getNextFreeInode(tx)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	err = addRemoteGCS(tx, parent, id, bucket, key, generation, size, ModTime, isDir)
+	if err != nil {
+		return InvalidINode, err
+	}
+	err = addChild(tx, parent, id, name)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	return id, nil
+
+}
+
+func addRemoteGCS(tx *bolt.Tx, parentINode INode, inode INode, bucket string, key string, generation int64, size int64, modTime time.Time, isDir bool) error {
+	var BID BlockID
+	if isDir {
+		BID = NABlock
+	} else {
+		hashID := Sha256.Sum([]byte(fmt.Sprintf("%s/%s:%d", bucket, key, generation)))
+		copy(BID[:], hashID)
+	}
+	return putNodeRepr(tx, inode, &NodeRepr{ParentINode: parentINode,
+		IsDir:                isDir,
+		Bucket:               bucket,
+		Key:                  key,
+		Generation:           generation,
+		Size:                 size,
+		ModTime:              modTime,
+		BID:                  BID,
+		IsDeferredChildFetch: isDir})
 }
 
 func (db *INodeDB) AddRemoteURL(tx *bolt.Tx, parent INode, name string, url string, etag string, size int64, ModTime time.Time) (INode, error) {

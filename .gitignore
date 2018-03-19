@@ -1,1 +1,5 @@
 vendor
+examples/corpus
+examples/crashers
+examples/suppressions
+sply2-fuzz.zip

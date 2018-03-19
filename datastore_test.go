@@ -22,7 +22,7 @@ func testDataStore() *DataStore {
 	if err != nil {
 		panic(err)
 	}
-	ds := NewDataStore(dir)
+	ds := NewDataStore(dir, nil)
 	return ds
 }
 
@@ -33,11 +33,11 @@ func TestPersistence(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	ds1 := NewDataStore(dir)
+	ds1 := NewDataStore(dir, nil)
 	aID := createFile(require, ds1, RootINode, "a", "data")
 	ds1.Close()
 
-	ds2 := NewDataStore(dir)
+	ds2 := NewDataStore(dir, nil)
 
 	r, err := ds2.GetReadRef(aID)
 	require.Nil(err)

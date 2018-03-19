@@ -2,7 +2,6 @@ package sply2
 
 import (
 	"io"
-	"time"
 )
 
 type INode uint32
@@ -84,12 +83,12 @@ type ReadableRef interface {
 // 	Writable WritableRef
 // }
 
-type Node interface {
-	IsDir() bool
-	Size() int64
-	ModTime() time.Time
+// type Node interface {
+// 	IsDir() bool
+// 	Size() int64
+// 	ModTime() time.Time
 
-	Remote() RemoteRef
-	Frozen() FrozenRef
-	Writable() WritableRef
-}
+// 	Remote() RemoteRef
+// 	Frozen() FrozenRef
+// 	Writable() WritableRef
+// }
