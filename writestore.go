@@ -16,13 +16,22 @@ type WritableStoreImp struct {
 
 type WritableRefImp struct {
 	filename string
+	offset   int64
 }
 
 func NewWritableRefImp(name string) WritableRef {
-	return &WritableRefImp{name}
+	return &WritableRefImp{name, 0}
 }
 
-func (w *WritableRefImp) Read(offset int64, dest []byte) (int, error) {
+func (w *WritableRefImp) Seek(offset int64, whence int) (int64, error) {
+	if whence != 0 {
+		panic("unimp")
+	}
+	w.offset = offset
+	return w.offset, nil
+}
+
+func (w *WritableRefImp) Read(dest []byte) (int, error) {
 	f, err := os.OpenFile(w.filename, os.O_RDONLY, 0755)
 	if err != nil {
 		return 0, err
@@ -30,15 +39,16 @@ func (w *WritableRefImp) Read(offset int64, dest []byte) (int, error) {
 
 	defer f.Close()
 
-	_, err = f.Seek(offset, 0)
+	n, err := f.Seek(w.offset, 0)
 	if err != nil {
 		return 0, err
 	}
+	w.offset += n
 
 	return f.Read(dest)
 }
 
-func (w *WritableRefImp) Write(offset int64, buffer []byte) (int, error) {
+func (w *WritableRefImp) Write(buffer []byte) (int, error) {
 	f, err := os.OpenFile(w.filename, os.O_RDWR, 0755)
 	if err != nil {
 		return 0, err
@@ -46,10 +56,11 @@ func (w *WritableRefImp) Write(offset int64, buffer []byte) (int, error) {
 
 	defer f.Close()
 
-	_, err = f.Seek(offset, 0)
+	n, err := f.Seek(w.offset, 0)
 	if err != nil {
 		return 0, err
 	}
+	w.offset += n
 
 	return f.Write(buffer)
 }

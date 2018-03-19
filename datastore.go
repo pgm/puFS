@@ -6,9 +6,11 @@ import (
 	"encoding/base64"
 	"encoding/gob"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
+	"regexp"
 	"time"
 
 	bolt "github.com/coreos/bbolt"
@@ -40,6 +42,43 @@ const DEFAULT_EXPIRY = 2 * 24 * time.Hour
 // Renew leases every hour
 const STALE_LEASE_DURATION = 1 * time.Hour
 
+///////////////////////////
+
+func NewDataStore(path string, remoteRefFactory RemoteRefFactory) *DataStore {
+	dbFilename := path + "/db"
+	freezerPath := path + "/freezer"
+	err := os.MkdirAll(freezerPath, 0700)
+	if err != nil {
+		log.Fatalf("%s: Could not create %s\n", err, freezerPath)
+	}
+	return &DataStore{path: path,
+		db:               NewINodeDB(dbFilename, 1000),
+		writableStore:    NewWritableStore(path),
+		freezer:          NewFreezer(freezerPath),
+		remoteRefFactory: remoteRefFactory}
+}
+
+func (d *DataStore) Close() {
+	d.db.Close()
+}
+
+///////////////////////////
+
+// Mount
+
+func (d *DataStore) MountByLabel(inode INode, label string) error {
+	err := validateName(label)
+	if err != nil {
+		return err
+	}
+
+	BID, err := d.remoteRefFactory.GetRoot(label)
+	if err != nil {
+		return err
+	}
+	return d.Mount(inode, BID)
+}
+
 func genRandomString() string {
 	b := make([]byte, 16)
 	_, err := rand.Read(b)
@@ -66,15 +105,34 @@ func (d *DataStore) renewLeases() error {
 	return nil
 }
 
-func (d *DataStore) MountByLabel(inode INode, label string) error {
-	BID, err := d.remoteRefFactory.GetRoot(label)
+func (d *DataStore) Unmount(inode INode) error {
+	var foundMount *Mount
+	newMounts := make([]*Mount, 0, len(d.mounts))
+
+	// copy mounts except for the one unmounted
+	for _, m := range d.mounts {
+		if m.mountPoint == inode {
+			foundMount = m
+		} else {
+			newMounts = append(newMounts, m)
+		}
+	}
+
+	if foundMount == nil {
+		return NoSuchMountErr
+	}
+
+	// record the lease is now expired
+	err := d.remoteRefFactory.SetLease(foundMount.leaseName, time.Now(), foundMount.BID)
 	if err != nil {
 		return err
 	}
-	return d.Mount(inode, BID)
+
+	d.mounts = newMounts
+
+	return nil
 }
 
-// TODO: write unmount
 func (d *DataStore) Mount(inode INode, BID BlockID) error {
 	for _, m := range d.mounts {
 		if m.mountPoint == inode {
@@ -104,29 +162,21 @@ func (d *DataStore) Mount(inode INode, BID BlockID) error {
 	return nil
 }
 
-func NewDataStore(path string, remoteRefFactory RemoteRefFactory) *DataStore {
-	dbFilename := path + "/db"
-	freezerPath := path + "/freezer"
-	err := os.MkdirAll(freezerPath, 0700)
-	if err != nil {
-		log.Fatalf("%s: Could not create %s\n", err, freezerPath)
-	}
-	return &DataStore{path: path,
-		db:               NewINodeDB(dbFilename, 1000),
-		writableStore:    NewWritableStore(path),
-		freezer:          NewFreezer(freezerPath),
-		remoteRefFactory: remoteRefFactory}
-}
-
-func (d *DataStore) Close() {
-	d.db.Close()
-}
-
 func (d *DataStore) GetNodeID(parent INode, name string) (INode, error) {
 	var inode INode
 	var err error
 
-	err = d.db.view(func(tx *bolt.Tx) error {
+	err = validateName(name)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	err = d.db.update(func(tx *bolt.Tx) error {
+		err = d.loadLazyChildren(tx, parent)
+		if err != nil {
+			return err
+		}
+
 		inode, err = d.db.GetNodeID(tx, parent, name)
 		if err != nil {
 			return err
@@ -141,7 +191,31 @@ func (d *DataStore) GetNodeID(parent INode, name string) (INode, error) {
 	return inode, err
 }
 
-func (d *DataStore) LoadLazyChildren(tx *bolt.Tx, id INode) error {
+func (d *DataStore) GetDirContents(id INode) ([]string, error) {
+	var names []string
+	var err error
+
+	err = d.db.view(func(tx *bolt.Tx) error {
+		err = d.loadLazyChildren(tx, id)
+		if err != nil {
+			return err
+		}
+
+		names, err = d.db.GetDirNames(tx, id)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return names, nil
+}
+
+func (d *DataStore) loadLazyChildren(tx *bolt.Tx, id INode) error {
 	node, err := getNodeRepr(tx, id)
 	if node.IsDir && node.IsDeferredChildFetch {
 		if node.BID != NABlock {
@@ -158,7 +232,7 @@ func (d *DataStore) LoadLazyChildren(tx *bolt.Tx, id INode) error {
 				return err
 			}
 			buffer := make([]byte, node.Size)
-			_, err = fr.Read(0, buffer)
+			_, err = fr.Read(buffer)
 			dec := gob.NewDecoder(bytes.NewReader(buffer))
 			var dir Dir
 			err = dec.Decode(&dir)
@@ -194,43 +268,56 @@ func (d *DataStore) LoadLazyChildren(tx *bolt.Tx, id INode) error {
 	return nil
 }
 
-func (d *DataStore) GetDirContents(id INode) ([]string, error) {
-	var names []string
-	var err error
+func (d *DataStore) AddRemoteGCS(parent INode, name string, bucket string, key string) (INode, error) {
+	var inode INode
 
-	err = d.db.view(func(tx *bolt.Tx) error {
-		err = d.LoadLazyChildren(tx, id)
+	err := validateName(name)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	generation, size, modTime, isDir, err := getGCSAttr(bucket, key)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	err = d.db.update(func(tx *bolt.Tx) error {
+		err = d.loadLazyChildren(tx, parent)
 		if err != nil {
 			return err
 		}
 
-		names, err = d.db.GetDirNames(tx, id)
+		inode, err = d.db.AddRemoteGCS(tx, parent, name, bucket, key, generation, size, modTime, isDir)
 		if err != nil {
 			return err
 		}
+
 		return nil
 	})
 
 	if err != nil {
-		return nil, err
+		return InvalidINode, err
 	}
 
-	return names, nil
-}
-
-func (d *DataStore) AddRemoteGCS(parent INode, name string, bucket string, key string) (INode, error) {
-	panic("unimp")
-	// query GCS to figure out rest of parameters and delegate down to nodedb
+	return inode, err
 }
 
 func (d *DataStore) MakeDir(parent INode, name string) (INode, error) {
 	// d.locker.RLock(parent)
 	// defer d.locker.RUnlock(parent)
+	err := validateName(name)
+	if err != nil {
+		return InvalidINode, err
+	}
 
-	var err error
 	var inode INode
 
 	err = d.db.update(func(tx *bolt.Tx) error {
+		err = d.loadLazyChildren(tx, parent)
+		if err != nil {
+			return err
+		}
+
 		inode, err = d.db.AddDir(tx, parent, name)
 		if err != nil {
 			return err
@@ -242,8 +329,18 @@ func (d *DataStore) MakeDir(parent INode, name string) (INode, error) {
 }
 
 func (d *DataStore) Remove(parent INode, name string) error {
-	err := d.db.update(func(tx *bolt.Tx) error {
-		err := d.db.RemoveNode(tx, parent, name)
+	err := validateName(name)
+	if err != nil {
+		return err
+	}
+
+	err = d.db.update(func(tx *bolt.Tx) error {
+		err = d.loadLazyChildren(tx, parent)
+		if err != nil {
+			return err
+		}
+
+		err = d.db.RemoveNode(tx, parent, name)
 		if err != nil {
 			return err
 		}
@@ -257,6 +354,11 @@ func (d *DataStore) AddRemoteURL(parent INode, name string, URL string) (INode, 
 	var inode INode
 	var err error
 
+	err = validateName(name)
+	if err != nil {
+		return InvalidINode, err
+	}
+
 	etag, size, err := getURLAttr(URL)
 	if err != nil {
 		return InvalidINode, err
@@ -265,6 +367,11 @@ func (d *DataStore) AddRemoteURL(parent INode, name string, URL string) (INode, 
 	modTime := time.Now()
 
 	err = d.db.update(func(tx *bolt.Tx) error {
+		err = d.loadLazyChildren(tx, parent)
+		if err != nil {
+			return err
+		}
+
 		inode, err = d.db.AddRemoteURL(tx, parent, name, URL, etag, size, modTime)
 		if err != nil {
 			return err
@@ -285,7 +392,17 @@ func (d *DataStore) CreateWritable(parent INode, name string) (INode, WritableRe
 	var filename string
 	var err error
 
+	err = validateName(name)
+	if err != nil {
+		return InvalidINode, nil, err
+	}
+
 	err = d.db.update(func(tx *bolt.Tx) error {
+		err = d.loadLazyChildren(tx, parent)
+		if err != nil {
+			return err
+		}
+
 		filename, err = d.writableStore.NewFile()
 		if err != nil {
 			return err
@@ -303,27 +420,7 @@ func (d *DataStore) CreateWritable(parent INode, name string) (INode, WritableRe
 		return InvalidINode, nil, err
 	}
 
-	return inode, &WritableRefImp{filename}, err
-}
-
-type DirEntry struct {
-	Name    string
-	IsDir   bool
-	Size    int64
-	ModTime time.Time
-
-	BID BlockID // maybe lift this up to header block as previously considered. Would allow GC to trace references without reading/parsing whole block
-
-	URL  string
-	ETag string
-
-	Bucket     string
-	Key        string
-	Generation int64
-}
-
-type Dir struct {
-	Entries []DirEntry
+	return inode, &WritableRefImp{filename, 0}, err
 }
 
 func freezeDir(tempDir string, freezer Freezer, dir *Dir) (BlockID, error) {
@@ -343,6 +440,11 @@ func freezeDir(tempDir string, freezer Freezer, dir *Dir) (BlockID, error) {
 }
 
 func (ds *DataStore) Push(inode INode, name string) error {
+	err := validateName(name)
+	if err != nil {
+		return err
+	}
+
 	rootBID, err := ds.Freeze(inode)
 	if err != nil {
 		return err
@@ -518,7 +620,7 @@ func (d *DataStore) Freeze(inode INode) (BlockID, error) {
 	return BID, err
 }
 
-func (d *DataStore) GetReadRef(inode INode) (ReadableRef, error) {
+func (d *DataStore) GetReadRef(inode INode) (io.ReadSeeker, error) {
 	var node *NodeRepr
 	var err error
 
@@ -529,6 +631,7 @@ func (d *DataStore) GetReadRef(inode INode) (ReadableRef, error) {
 		}
 		return nil
 	})
+
 	if err != nil {
 		return nil, err
 	}
@@ -538,7 +641,7 @@ func (d *DataStore) GetReadRef(inode INode) (ReadableRef, error) {
 	}
 
 	if node.LocalWritablePath != "" {
-		return &WritableRefImp{node.LocalWritablePath}, nil
+		return &WritableRefImp{node.LocalWritablePath, 0}, nil
 	}
 
 	fmt.Printf("Getting ref\n")
@@ -568,4 +671,13 @@ func (d *DataStore) pullIntoFreezer(node *NodeRepr) error {
 	}
 
 	return d.freezer.AddBlock(node.BID, remote)
+}
+
+var ValidNameRegExp *regexp.Regexp = regexp.MustCompile("[A-Za-z0-9.~#$@ ()+_-]+")
+
+func validateName(name string) error {
+	if ValidNameRegExp.MatchString(name) {
+		return nil
+	}
+	return InvalidCharFilenameErr
 }

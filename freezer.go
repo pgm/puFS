@@ -14,14 +14,23 @@ import (
 var ChunkStat []byte = []byte("ChunkStat")
 
 func NewFrozenRef(name string) FrozenRef {
-	return &FrozenRefImp{name}
+	return &FrozenRefImp{filename: name}
 }
 
 type FrozenRefImp struct {
 	filename string
+	offset   int64
 }
 
-func (w *FrozenRefImp) Read(offset int64, dest []byte) (int, error) {
+func (w *FrozenRefImp) Seek(offset int64, whence int) (int64, error) {
+	if whence != 0 {
+		panic("unimp")
+	}
+	w.offset = offset
+	return w.offset, nil
+}
+
+func (w *FrozenRefImp) Read(dest []byte) (int, error) {
 	f, err := os.OpenFile(w.filename, os.O_RDONLY, 0755)
 	if err != nil {
 		return 0, err
@@ -29,10 +38,11 @@ func (w *FrozenRefImp) Read(offset int64, dest []byte) (int, error) {
 
 	defer f.Close()
 
-	_, err = f.Seek(offset, 0)
+	n, err := f.Seek(w.offset, 0)
 	if err != nil {
 		return 0, err
 	}
+	w.offset += n
 
 	return f.Read(dest)
 }
@@ -91,7 +101,7 @@ func (f *FreezerImp) GetRef(BID BlockID) (FrozenRef, error) {
 	}
 	fmt.Printf("Path %s exists\n", filename)
 
-	return &FrozenRefImp{filename}, nil
+	return &FrozenRefImp{filename: filename}, nil
 }
 
 func computeHash(path string) (BlockID, error) {

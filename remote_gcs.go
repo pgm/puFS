@@ -3,6 +3,7 @@ package sply2
 import (
 	"errors"
 	"io"
+	"time"
 
 	// Imports the Google Cloud Storage client package.
 	"cloud.google.com/go/storage"
@@ -61,4 +62,8 @@ func NewRemoteObject(client *storage.Client, bucketName string, key string) (*Re
 	}
 
 	return &RemoteGCS{Bucket: bucket, Key: key, Generation: attr.Generation, Size: attr.Size}, nil
+}
+
+func getGCSAttr(bucket string, key string) (int64, int64, time.Time, bool, error) {
+	panic("unimp")
 }

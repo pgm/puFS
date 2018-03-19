@@ -24,7 +24,7 @@ type RemoteFile struct {
 
 type RemoteRefFactory interface {
 	GetRef(node *NodeRepr) (RemoteRef, error)
-	Push(BID BlockID, rr ReadableRef) error
+	Push(BID BlockID, rr io.Reader) error
 	SetLease(name string, expiry time.Time, BID BlockID) error
 	SetRoot(name string, BID BlockID) error
 	GetRoot(name string) (BlockID, error)
@@ -37,7 +37,7 @@ type RemoteRefFactoryImp struct {
 	GCSClient    *storage.Client
 }
 
-func (rrf *RemoteRefFactoryImp) Push(BID BlockID, rr ReadableRef) error {
+func (rrf *RemoteRefFactoryImp) Push(BID BlockID, rr io.Reader) error {
 	ctx := context.Background()
 	// upload only if generation == 0, which means this upload will fail if any object exists with the key
 	// TODO: need to add a check for that case
@@ -48,7 +48,7 @@ func (rrf *RemoteRefFactoryImp) Push(BID BlockID, rr ReadableRef) error {
 	writer := objHandle.NewWriter(ctx)
 	defer writer.Close()
 
-	n, err := io.Copy(writer, &ReadableRefAdapter{rr: rr})
+	n, err := io.Copy(writer, rr)
 	if err != nil {
 		return err
 	}
@@ -56,20 +56,6 @@ func (rrf *RemoteRefFactoryImp) Push(BID BlockID, rr ReadableRef) error {
 	fmt.Printf("Bytes copied: %d\n", n)
 
 	return nil
-}
-
-type ReadableRefAdapter struct {
-	rr     ReadableRef
-	offset int64
-}
-
-func (rra *ReadableRefAdapter) Read(buffer []byte) (int, error) {
-	n, err := rra.rr.Read(rra.offset, buffer)
-	rra.offset += int64(n)
-	if err != nil {
-		return n, err
-	}
-	return n, err
 }
 
 func NewRemoteRefFactory(client *storage.Client, CASBucket string, CASKeyPrefix string) *RemoteRefFactoryImp {
