@@ -1,37 +1,41 @@
 package sply2
 
-// func TestFreezePush(t *testing.T) {
-// 	require := require.New(t)
+import (
+	"io/ioutil"
+	"testing"
 
-// 	content := generateUniqueString()
+	"github.com/stretchr/testify/require"
+)
 
-// 	dir1, err := ioutil.TempDir("", "test")
-// 	require.Nil(err)
+func TestFreezePush(t *testing.T) {
+	require := require.New(t)
 
-// 	client := testClient()
-// 	f := NewRemoteRefFactory(client, BucketName, "test-freeze-push/")
-// 	ds1 := NewDataStore(dir1, f)
-// 	aID := createFile(require, ds1, RootINode, "a", content)
-// 	err = ds1.Push(RootINode, "sample-label")
-// 	require.Nil(err)
-// 	ds1.Close()
+	content := generateUniqueString()
 
-// 	dir2, err := ioutil.TempDir("", "test")
-// 	require.Nil(err)
-// 	ds2 := NewDataStore(dir2, f)
+	dir1, err := ioutil.TempDir("", "test")
+	require.Nil(err)
 
-// 	err = ds2.MountByLabel(RootINode, "sample-label")
-// 	require.Nil(err)
+	f := NewRemoteRefFactoryMem()
+	ds1 := NewDataStore(dir1, f)
+	aID := createFile(require, ds1, RootINode, "a", content)
+	err = ds1.Push(RootINode, "sample-label")
+	require.Nil(err)
+	ds1.Close()
 
-// 	aID, err = ds2.GetNodeID(RootINode, "a")
-// 	r, err := ds2.GetReadRef(aID)
-// 	require.Nil(err)
+	dir2, err := ioutil.TempDir("", "test")
+	require.Nil(err)
+	ds2 := NewDataStore(dir2, f)
 
-// 	buffer := make([]byte, 4)
-// 	_, err = r.Read(0, buffer)
-// 	require.Nil(err)
+	err = ds2.MountByLabel(RootINode, "sample-label")
+	require.Nil(err)
 
-// 	r.Release()
+	aID, err = ds2.GetNodeID(RootINode, "a")
+	require.Nil(err)
+	r, err := ds2.GetReadRef(aID)
+	require.Nil(err)
 
-// 	require.Equal(content, string(buffer))
-// }
+	buffer, err := ioutil.ReadAll(r)
+	require.Nil(err)
+
+	require.Equal(content, string(buffer))
+}

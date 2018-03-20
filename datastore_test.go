@@ -11,7 +11,7 @@ import (
 func createFile(require *require.Assertions, d *DataStore, parent INode, name string, content string) INode {
 	aID, w, err := d.CreateWritable(parent, name)
 	require.Nil(err)
-	_, err = w.Write(0, []byte(content))
+	_, err = w.Write([]byte(content))
 	require.Nil(err)
 	w.Release()
 	return aID
@@ -43,10 +43,8 @@ func TestPersistence(t *testing.T) {
 	require.Nil(err)
 
 	buffer := make([]byte, 4)
-	_, err = r.Read(0, buffer)
+	_, err = r.Read(buffer)
 	require.Nil(err)
-
-	r.Release()
 
 	require.Equal("data", string(buffer))
 }
@@ -62,10 +60,8 @@ func TestWriteRead(t *testing.T) {
 	require.Nil(err)
 
 	buffer := make([]byte, 4)
-	_, err = r.Read(0, buffer)
+	_, err = r.Read(buffer)
 	require.Nil(err)
-
-	r.Release()
 
 	require.Equal("data", string(buffer))
 }
@@ -84,17 +80,15 @@ func TestFreezeFile(t *testing.T) {
 	require.Nil(err)
 
 	buffer := make([]byte, 4)
-	_, err = r.Read(0, buffer)
+	_, err = r.Read(buffer)
 	require.Nil(err)
-
-	r.Release()
 
 	require.Equal("data", string(buffer))
 
 	// now verify this is the same thing that's in the freezer
 	r, err = d.freezer.GetRef(BID)
 	require.Nil(err)
-	_, err = r.Read(0, buffer)
+	_, err = r.Read(buffer)
 	require.Equal("data", string(buffer))
 }
 
@@ -216,10 +210,9 @@ func TestRemote(t *testing.T) {
 	require.Nil(err)
 
 	buffer := make([]byte, 500)
-	_, err = r.Read(0, buffer)
+	_, err = r.Read(buffer)
 	require.Nil(err)
 
-	r.Release()
 	require.Equal("HTML", string(buffer))
 	fmt.Printf("%s", string(buffer))
 }

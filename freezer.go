@@ -38,13 +38,18 @@ func (w *FrozenRefImp) Read(dest []byte) (int, error) {
 
 	defer f.Close()
 
-	n, err := f.Seek(w.offset, 0)
+	_, err = f.Seek(w.offset, 0)
 	if err != nil {
 		return 0, err
 	}
-	w.offset += n
 
-	return f.Read(dest)
+	n, err := f.Read(dest)
+	if err != nil {
+		return n, err
+	}
+	w.offset += int64(n)
+
+	return n, nil
 }
 
 func (w *FrozenRefImp) Release() {

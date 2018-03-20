@@ -231,9 +231,12 @@ func (d *DataStore) loadLazyChildren(tx *bolt.Tx, id INode) error {
 			if err != nil {
 				return err
 			}
-			buffer := make([]byte, node.Size)
-			_, err = fr.Read(buffer)
+
+			buffer, err := ioutil.ReadAll(fr)
+			// buffer := make([]byte, node.Size)
+			// _, err = fr.Read(buffer)
 			dec := gob.NewDecoder(bytes.NewReader(buffer))
+
 			var dir Dir
 			err = dec.Decode(&dir)
 			if err != nil {

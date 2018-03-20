@@ -2,7 +2,6 @@ package sply2
 
 import (
 	"bytes"
-	"io"
 	"log"
 	"testing"
 	"time"
@@ -26,27 +25,6 @@ func testClient() *storage.Client {
 	return client
 }
 
-type MockReadable struct {
-	value string
-}
-
-func (m *MockReadable) Read(offset int64, dest []byte) (int, error) {
-	end := int(offset) + len(dest)
-	if end > len(m.value) {
-		end = len(m.value)
-	}
-	copy(dest, m.value[int(offset):end])
-	copiedLen := end - int(offset)
-	if copiedLen == 0 {
-		return 0, io.EOF
-	}
-	return copiedLen, nil
-}
-
-func (m *MockReadable) Release() {
-
-}
-
 const BucketName = "gcs-test-1136"
 
 func generateUniqueString() string {
@@ -65,7 +43,7 @@ func TestBlockPushPull(t *testing.T) {
 
 	BID := BlockID{1}
 	f := NewRemoteRefFactory(client, BucketName, "test/")
-	err := f.Push(BID, &MockReadable{body})
+	err := f.Push(BID, bytes.NewReader([]byte(body)))
 
 	r, err := o.NewReader(ctx)
 	require.Nil(err)

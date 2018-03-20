@@ -60,6 +60,9 @@ func nodeToBytes(node *NodeRepr) []byte {
 }
 
 func bytesToNode(b []byte) *NodeRepr {
+	if b == nil {
+		panic("cannot decode nil")
+	}
 	var node NodeRepr
 	buffer := bytes.NewBuffer(b)
 	dec := gob.NewDecoder(buffer)
@@ -86,9 +89,10 @@ func getNodeRepr(tx *bolt.Tx, id INode) (*NodeRepr, error) {
 
 	nb := tx.Bucket(NodeBucket)
 	value := nb.Get(idBytes)
-	// if err != nil {
-	// 	return nil, err
-	// }
+
+	if value == nil {
+		panic(fmt.Sprintf("Could not find node with ID %d", int(id)))
+	}
 
 	return bytesToNode(value), nil
 }
@@ -329,6 +333,7 @@ func (db *INodeDB) MutateBIDForMount(tx *bolt.Tx, id INode, BID BlockID) error {
 	}
 
 	node.BID = BID
+	node.IsDeferredChildFetch = true
 	err = putNodeRepr(tx, id, node)
 	return err
 }
