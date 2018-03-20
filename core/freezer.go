@@ -1,4 +1,4 @@
-package sply2
+package core
 
 import (
 	"crypto/sha256"

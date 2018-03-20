@@ -1,4 +1,4 @@
-package sply2
+package core
 
 import (
 	"encoding/base64"
@@ -7,9 +7,6 @@ import (
 	"io/ioutil"
 	"strings"
 	"time"
-
-	"cloud.google.com/go/storage"
-	"golang.org/x/net/context"
 )
 
 type RemoteFile struct {
@@ -141,51 +138,6 @@ func (r *RemoteRefFactoryMem) GetChildNodes(node *NodeRepr) ([]*RemoteFile, erro
 	return nil, nil
 }
 
-type RemoteRefFactoryImp struct {
-	CASBucket    string
-	CASKeyPrefix string
-	GCSClient    *storage.Client
-}
-
-func (rrf *RemoteRefFactoryImp) Push(BID BlockID, rr io.Reader) error {
-	ctx := context.Background()
-	// upload only if generation == 0, which means this upload will fail if any object exists with the key
-	// TODO: need to add a check for that case
-	key := getBlockKey(rrf.CASKeyPrefix, BID)
-	fmt.Println("bucket " + rrf.CASBucket + " " + key)
-	CASBucketRef := rrf.GCSClient.Bucket(rrf.CASBucket)
-	objHandle := CASBucketRef.Object(key).If(storage.Conditions{DoesNotExist: true})
-	writer := objHandle.NewWriter(ctx)
-	defer writer.Close()
-
-	n, err := io.Copy(writer, rr)
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("Bytes copied: %d\n", n)
-
-	return nil
-}
-
-func NewRemoteRefFactory(client *storage.Client, CASBucket string, CASKeyPrefix string) *RemoteRefFactoryImp {
-	return &RemoteRefFactoryImp{GCSClient: client, CASBucket: CASBucket, CASKeyPrefix: CASKeyPrefix}
-}
-
 func getBlockKey(CASKeyPrefix string, BID BlockID) string {
 	return CASKeyPrefix + base64.URLEncoding.EncodeToString(BID[:])
-}
-
-func (rrf *RemoteRefFactoryImp) GetRef(node *NodeRepr) (RemoteRef, error) {
-	var remote RemoteRef
-
-	if node.URL != "" {
-		remote = &RemoteURL{URL: node.URL, ETag: node.ETag, Length: node.Size}
-	} else {
-		CASBucketRef := rrf.GCSClient.Bucket(rrf.CASBucket)
-
-		remote = &RemoteGCS{Bucket: CASBucketRef, Key: getBlockKey(rrf.CASKeyPrefix, node.BID), Size: node.Size}
-	}
-
-	return remote, nil
 }

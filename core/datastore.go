@@ -1,4 +1,4 @@
-package sply2
+package core
 
 import (
 	"bytes"
@@ -17,6 +17,7 @@ import (
 )
 
 var NABlock BlockID = BlockID{}
+var ValidNameRegExp *regexp.Regexp = regexp.MustCompile("[A-Za-z0-9.~#$@ ()+_-]+")
 
 type Mount struct {
 	mountPoint       INode
@@ -676,11 +677,16 @@ func (d *DataStore) pullIntoFreezer(node *NodeRepr) error {
 	return d.freezer.AddBlock(node.BID, remote)
 }
 
-var ValidNameRegExp *regexp.Regexp = regexp.MustCompile("[A-Za-z0-9.~#$@ ()+_-]+")
-
 func validateName(name string) error {
 	if ValidNameRegExp.MatchString(name) {
 		return nil
 	}
 	return InvalidCharFilenameErr
+}
+
+func getGCSAttr(bucket string, key string) (int64, int64, time.Time, bool, error) {
+	panic("unimp")
+}
+func getURLAttr(url string) (string, int64, error) {
+	panic("unimp")
 }
