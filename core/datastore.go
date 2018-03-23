@@ -283,10 +283,24 @@ func (d *DataStore) GetDirContents(id INode) ([]*DirEntry, error) {
 		for _, n := range names {
 			var node *NodeRepr
 			node, err = getNodeRepr(tx, n.ID)
+
+			size := node.Size
+			mtime := node.ModTime
+
+			if node.LocalWritablePath != "" {
+				fi, err := os.Stat(node.LocalWritablePath)
+				if err != nil {
+					return err
+				}
+
+				size = fi.Size()
+				mtime = fi.ModTime()
+			}
+
 			entries = append(entries, &DirEntry{Name: n.Name,
 				IsDir:   node.IsDir,
-				Size:    node.Size,
-				ModTime: node.ModTime,
+				Size:    size,
+				ModTime: mtime,
 
 				BID: node.BID,
 

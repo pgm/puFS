@@ -111,6 +111,20 @@ func computeHash(path string) (BlockID, error) {
 	return BID, err
 }
 
+func (f *FreezerImp) hasChunk(BID BlockID) (bool, error) {
+	var value []byte
+	err := f.db.View(func(tx RTx) error {
+		chunkStat := tx.RBucket(ChunkStat)
+		value = chunkStat.Get(BID[:])
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+
+	return value != nil, nil
+}
+
 func (f *FreezerImp) writeChunkStatus(BID BlockID, isRemote bool) error {
 	err := f.db.Update(func(tx RWTx) error {
 		chunkStat := tx.WBucket(ChunkStat)
@@ -157,6 +171,14 @@ func (f *FreezerImp) AddFile(path string) (BlockID, error) {
 }
 
 func (f *FreezerImp) AddBlock(BID BlockID, remoteRef RemoteRef) error {
+	hasChunk, err := f.hasChunk(BID)
+	if err != nil {
+		return err
+	}
+	if hasChunk {
+		return nil
+	}
+
 	filename := f.getPath(BID)
 
 	fi, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR|os.O_EXCL, 0600)

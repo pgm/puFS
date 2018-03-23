@@ -132,6 +132,11 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 				if e.IsDir {
 					fileType = "d"
 				}
+				if e.BID != core.NABlock {
+					fileType += "z"
+				} else {
+					fileType += " "
+				}
 
 				fmt.Printf("\t%s %-10s %10d %s\n", fileType, e.Name, e.Size, e.ModTime)
 			}
