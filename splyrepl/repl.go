@@ -133,7 +133,7 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 					fileType = "d"
 				}
 
-				fmt.Printf("\t%s %10s %10d %s\n", fileType, e.Name, e.Size, e.ModTime)
+				fmt.Printf("\t%s %-10s %10d %s\n", fileType, e.Name, e.Size, e.ModTime)
 			}
 		}
 	} else if statementType == FreezeStatement {
