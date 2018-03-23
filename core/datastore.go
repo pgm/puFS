@@ -10,6 +10,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"path"
 	"regexp"
 	"time"
 )
@@ -25,8 +26,8 @@ type Mount struct {
 }
 
 type DataStore struct {
-	path string
-
+	path             string
+	mountTablePath   string
 	db               *INodeDB
 	freezer          Freezer
 	writableStore    WriteableStore
@@ -43,17 +44,50 @@ const STALE_LEASE_DURATION = 1 * time.Hour
 
 ///////////////////////////
 
-func NewDataStore(path string, remoteRefFactory RemoteRefFactory, freezerKV KVStore, nodeKV KVStore) *DataStore {
-	freezerPath := path + "/freezer"
+func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory, freezerKV KVStore, nodeKV KVStore) *DataStore {
+	freezerPath := path.Join(storagePath, "freezer")
+	writablePath := path.Join(storagePath, "writable")
 	err := os.MkdirAll(freezerPath, 0700)
 	if err != nil {
 		log.Fatalf("%s: Could not create %s\n", err, freezerPath)
 	}
-	return &DataStore{path: path,
+	err = os.MkdirAll(writablePath, 0700)
+	if err != nil {
+		log.Fatalf("%s: Could not create %s\n", err, writablePath)
+	}
+
+	mountTablePath := path.Join(storagePath, "mounts.gob")
+	var mounts []*Mount
+	if _, err = os.Stat(mountTablePath); !os.IsNotExist(err) {
+		f, err := os.Open(mountTablePath)
+		defer f.Close()
+
+		dec := gob.NewDecoder(f)
+		err = dec.Decode(&mounts)
+		if err != nil {
+			log.Fatalf("%s: Could not read %s", err, mountTablePath)
+		}
+	}
+
+	return &DataStore{path: storagePath,
+		mountTablePath:   mountTablePath,
 		db:               NewINodeDB(1000, nodeKV),
-		writableStore:    NewWritableStore(path),
+		writableStore:    NewWritableStore(writablePath),
 		freezer:          NewFreezer(freezerPath, freezerKV),
 		remoteRefFactory: remoteRefFactory}
+}
+
+func (d *DataStore) persistMountTable() {
+	f, err := os.OpenFile(d.mountTablePath, os.O_CREATE|os.O_RDWR, 0660)
+	if err != nil {
+		log.Fatalf("%s: Could not open %s for writing", err, d.mountTablePath)
+	}
+	defer f.Close()
+	enc := gob.NewEncoder(f)
+	err = enc.Encode(d.mounts)
+	if err != nil {
+		log.Fatalf("%s: Could not write mount table", err)
+	}
 }
 
 func (d *DataStore) Close() {
@@ -127,6 +161,7 @@ func (d *DataStore) Unmount(inode INode) error {
 	}
 
 	d.mounts = newMounts
+	d.persistMountTable()
 
 	return nil
 }
@@ -156,6 +191,7 @@ func (d *DataStore) Mount(inode INode, BID BlockID) error {
 	}
 
 	d.mounts = append(d.mounts, mount)
+	d.persistMountTable()
 
 	return nil
 }
