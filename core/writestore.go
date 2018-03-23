@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 )
@@ -38,14 +39,18 @@ func (w *WritableRefImp) Read(dest []byte) (int, error) {
 	}
 
 	defer f.Close()
-
-	n, err := f.Seek(w.offset, 0)
+	fmt.Printf("Reading from %s:%d\n", w.filename, w.offset)
+	_, err = f.Seek(w.offset, 0)
 	if err != nil {
 		return 0, err
 	}
-	w.offset += n
 
-	return f.Read(dest)
+	n, err := f.Read(dest)
+	if err != nil {
+		return 0, err
+	}
+	w.offset += int64(n)
+	return n, err
 }
 
 func (w *WritableRefImp) Write(buffer []byte) (int, error) {
