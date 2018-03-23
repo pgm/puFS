@@ -83,10 +83,10 @@ func (f *FreezerImp) GetRef(BID BlockID) (FrozenRef, error) {
 	filename := f.getPath(BID)
 	_, err := os.Stat(filename)
 	if os.IsNotExist(err) {
-		fmt.Printf("Path %s does not exists\n", filename)
+		// fmt.Printf("Path %s does not exists\n", filename)
 		return nil, nil
 	}
-	fmt.Printf("Path %s exists\n", filename)
+	// fmt.Printf("Path %s exists\n", filename)
 
 	return &FrozenRefImp{filename: filename}, nil
 }
@@ -182,18 +182,18 @@ func (f *FreezerImp) AddBlock(BID BlockID, remoteRef RemoteRef) error {
 	filename := f.getPath(BID)
 
 	_, err = os.Stat(filename)
-	fmt.Printf("attempting to create %s (%s)\n", filename, err)
+	// fmt.Printf("attempting to create %s (%s)\n", filename, err)
 	fi, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR|os.O_EXCL, 0600)
-	fmt.Printf("err (%s)\n", err)
+	// fmt.Printf("err (%s)\n", err)
 	if err != nil {
 		return err
 	}
 
 	defer fi.Close()
 
-	fmt.Printf("Performing copy of 0-%d\n", remoteRef.GetSize())
+	// fmt.Printf("Performing copy of 0-%d\n", remoteRef.GetSize())
 	err = remoteRef.Copy(0, remoteRef.GetSize(), fi)
-	fmt.Printf("err from copy %s\n", err)
+	// fmt.Printf("err from copy %s\n", err)
 	if err != nil {
 		return err
 	}

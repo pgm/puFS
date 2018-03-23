@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/gob"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -595,7 +594,7 @@ func (d *DataStore) CreateWritable(parent INode, name string) (INode, WritableRe
 }
 
 func freezeDir(tempDir string, freezer Freezer, dir *Dir) (BlockID, error) {
-	fmt.Printf("freezeDir\n")
+	// fmt.Printf("freezeDir\n")
 	f, err := ioutil.TempFile(tempDir, "dir")
 	if err != nil {
 		return NABlock, err
@@ -700,7 +699,7 @@ func collectUnpushed(db *INodeDB, tx RTx, inode INode, isPushed func(BlockID) (b
 }
 
 func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) (BlockID, error) {
-	fmt.Printf("freezing %d\n", inode)
+	// fmt.Printf("freezing %d\n", inode)
 	node, err := getNodeRepr(tx, inode)
 	if err != nil {
 		return NABlock, err
@@ -711,14 +710,14 @@ func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) 
 	}
 
 	if node.IsDir {
-		fmt.Printf("inode %d is a dir\n", inode)
+		// fmt.Printf("inode %d is a dir\n", inode)
 		// if this is a directory, then we need to compute blocks for all child inodes
 		children, err := db.GetDirContents(tx, inode, false)
 		if err != nil {
 			return NABlock, err
 		}
 
-		fmt.Printf("Node %d has %d children\n", inode, len(children))
+		// fmt.Printf("Node %d has %d children\n", inode, len(children))
 		dirTable := make([]DirEntry, 0, 100)
 		for _, child := range children {
 			//child.ID
@@ -766,7 +765,7 @@ func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) 
 	if node.LocalWritablePath == "" {
 		panic("LocalWritablePath is empty")
 	}
-	fmt.Printf("inode %d is a writable file: %s\n", inode, node.LocalWritablePath)
+	// fmt.Printf("inode %d is a writable file: %s\n", inode, node.LocalWritablePath)
 
 	BID, err := freezer.AddFile(node.LocalWritablePath)
 	err = putNodeRepr(tx, inode, node)
@@ -824,9 +823,9 @@ func (d *DataStore) GetReadRef(inode INode) (io.ReadSeeker, error) {
 		return &WritableRefImp{node.LocalWritablePath, 0}, nil
 	}
 
-	fmt.Printf("Getting ref\n")
+	// fmt.Printf("Getting ref\n")
 	ref, err := d.freezer.GetRef(node.BID)
-	fmt.Printf("Got ref: %s %s\n", ref, err)
+	// fmt.Printf("Got ref: %s %s\n", ref, err)
 	if ref == nil && err == nil {
 		// do we have a remote to pull
 		err := d.pullIntoFreezer(node)
@@ -845,7 +844,7 @@ func (d *DataStore) GetReadRef(inode INode) (io.ReadSeeker, error) {
 }
 
 func (d *DataStore) pullIntoFreezer(node *NodeRepr) error {
-	fmt.Printf("Pulling %s/%s\n", node.Bucket, node.Key)
+	// fmt.Printf("Pulling %s/%s\n", node.Bucket, node.Key)
 	remote, err := d.remoteRefFactory.GetRef(node)
 	if err != nil {
 		return err

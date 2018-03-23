@@ -2,7 +2,6 @@ package sply2
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"time"
 
@@ -107,18 +106,18 @@ func (rrf *RemoteRefFactoryImp) Push(BID core.BlockID, rr io.Reader) error {
 	// upload only if generation == 0, which means this upload will fail if any object exists with the key
 	// TODO: need to add a check for that case
 	key := core.GetBlockKey(rrf.CASKeyPrefix, BID)
-	fmt.Println("bucket " + rrf.CASBucket + " " + key)
+	// fmt.Println("bucket " + rrf.CASBucket + " " + key)
 	CASBucketRef := rrf.GCSClient.Bucket(rrf.CASBucket)
 	objHandle := CASBucketRef.Object(key).If(storage.Conditions{DoesNotExist: true})
 	writer := objHandle.NewWriter(ctx)
 	defer writer.Close()
 
-	n, err := io.Copy(writer, rr)
+	_, err := io.Copy(writer, rr)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Bytes copied: %d\n", n)
+	// fmt.Printf("Bytes copied: %d\n", n)
 
 	return nil
 }
@@ -141,7 +140,7 @@ func (rrf *RemoteRefFactoryImp) GetRef(node *core.NodeRepr) (core.RemoteRef, err
 			remote = &RemoteGCS{Bucket: CASBucketRef, Key: core.GetBlockKey(rrf.CASKeyPrefix, node.BID), Size: node.Size}
 		}
 	}
-	fmt.Printf("remote=%v\n", remote)
+	// fmt.Printf("remote=%v\n", remote)
 
 	return remote, nil
 }
