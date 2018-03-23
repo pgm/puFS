@@ -33,6 +33,30 @@ func generateUniqueString() string {
 	return time.Now().Format(time.RFC3339Nano)
 }
 
+func TestListChildren(t *testing.T) {
+	require := require.New(t)
+	client := testClient()
+
+	f := NewRemoteRefFactory(client, BucketName, "test/")
+	files, err := f.GetChildNodes(&core.NodeRepr{Bucket: BucketName, Key: "test-data/"})
+	require.Nil(err)
+
+	require.Equal(4, len(files))
+	fileChecked := false
+	folderChecked := false
+	for _, f := range files {
+		if f.Name == "file1" {
+			require.Equal("test-data/file1", f.Key)
+			fileChecked = true
+		} else if f.Name == "folder1" {
+			require.Equal("test-data/folder1/", f.Key)
+			folderChecked = true
+		}
+	}
+	require.True(fileChecked)
+	require.True(folderChecked)
+}
+
 func TestBlockPushPull(t *testing.T) {
 	require := require.New(t)
 	client := testClient()
@@ -98,13 +122,10 @@ func TestDatastoreWithGCSRemote(t *testing.T) {
 	}
 	bucketName := "gcs-test-1136"
 	f := NewRemoteRefFactory(client, bucketName, "blocks/")
-	//		sply2.NewBoltDB(path.Join(dir, "nodes.db"), [][]byte{ChildNodeBucket, NodeBucket}))
-	dir, err := ioutil.TempDir("", "test")
+	dir, err := ioutil.TempDir("", "gcs_test")
 	require.Nil(err)
 
 	ds := core.NewDataStore(dir, f, core.NewMemStore([][]byte{core.ChunkStat}), core.NewMemStore([][]byte{core.ChildNodeBucket, core.NodeBucket}))
-	// ds := core.NewDataStore(dir, f, sply2.NewBoltDB(path.Join(dir, "freezer.db"), [][]byte{core.ChunkStat}),
-	// 	sply2.NewBoltDB(path.Join(dir, "nodes.db"), [][]byte{core.ChildNodeBucket, core.NodeBucket}))
 	ds.SetClients(f, f)
 
 	inode, err := ds.AddRemoteGCS(core.RootINode, "gcs", bucketName, "sample")
@@ -115,4 +136,10 @@ func TestDatastoreWithGCSRemote(t *testing.T) {
 	n, err := r.Read(b)
 	require.Equal(5, n)
 	require.Equal("hello", string(b[:n]))
+
+	// test child directories
+	inode, err = ds.AddRemoteGCS(core.RootINode, "gcs", bucketName, "test-data/")
+	children, err := ds.GetDirContents(inode)
+	require.Nil(err)
+	require.Equal(6, len(children))
 }

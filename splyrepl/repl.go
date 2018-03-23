@@ -7,6 +7,7 @@ import (
 	"log"
 	"path"
 	"strings"
+	"time"
 
 	"errors"
 	"fmt"
@@ -92,6 +93,8 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 	var parent core.INode
 	var name string
 	var inode core.INode
+
+	start := time.Now()
 
 	if statementType == ChdirStatement {
 		_, err = e.getINode(match[1])
@@ -203,10 +206,12 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 		panic("unknown statement type")
 	}
 
+	duration := time.Now().Sub(start)
+
 	if err == nil {
-		fmt.Printf("Success\n")
+		fmt.Printf("Success (%s)\n", duration)
 	} else {
-		fmt.Printf("Error: %s\n", err)
+		fmt.Printf("Error: %s (%s)\n", err, duration)
 	}
 }
 

@@ -3,7 +3,10 @@ package sply2
 import (
 	"errors"
 	"io"
+	"strings"
 	"time"
+
+	"google.golang.org/api/iterator"
 
 	// Imports the Google Cloud Storage client package.
 
@@ -73,7 +76,45 @@ type RemoteRefFactoryImp struct {
 }
 
 func (rrf *RemoteRefFactoryImp) GetChildNodes(node *core.NodeRepr) ([]*core.RemoteFile, error) {
-	panic("unimp")
+	ctx := context.Background()
+	b := rrf.GCSClient.Bucket(node.Bucket)
+	it := b.Objects(ctx, &storage.Query{Delimiter: "/", Prefix: node.Key, Versions: false})
+	result := make([]*core.RemoteFile, 0, 100)
+	for {
+		next, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		var file *core.RemoteFile
+		if next.Prefix != "" {
+			// if we really want mtime we could get the mtime of the prefix because it's usually an empty object via
+			// an explicit attr fetch of the prefix
+			file = &core.RemoteFile{Name: next.Prefix[len(node.Key) : len(next.Prefix)-1],
+				IsDir:  true,
+				Bucket: node.Bucket,
+				Key:    next.Prefix}
+		} else {
+			name := next.Name[len(node.Key):]
+			if name == "" {
+				continue
+			}
+			file = &core.RemoteFile{Name: name,
+				IsDir:      false,
+				Size:       next.Size,
+				ModTime:    next.Updated,
+				Bucket:     node.Bucket,
+				Key:        next.Name,
+				Generation: next.Generation}
+		}
+
+		result = append(result, file)
+	}
+
+	return result, nil
 }
 
 func (rrf *RemoteRefFactoryImp) SetLease(name string, expiry time.Time, BID core.BlockID) error {
@@ -98,7 +139,7 @@ func (rrf *RemoteRefFactoryImp) GetGCSAttr(bucket string, key string) (*core.GCS
 		return nil, err
 	}
 
-	return &core.GCSAttrs{Generation: attrs.Generation, IsDir: false, ModTime: attrs.Updated, Size: attrs.Size}, nil
+	return &core.GCSAttrs{Generation: attrs.Generation, IsDir: strings.HasSuffix(key, "/"), ModTime: attrs.Updated, Size: attrs.Size}, nil
 }
 
 func (rrf *RemoteRefFactoryImp) Push(BID core.BlockID, rr io.Reader) error {
