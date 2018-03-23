@@ -162,7 +162,7 @@ func isDir(tx RTx, id INode) (bool, error) {
 }
 
 func (db *INodeDB) isEmptyDir(tx RTx, inode INode) (bool, error) {
-	names, err := db.GetDirContents(tx, inode)
+	names, err := db.GetDirContents(tx, inode, false)
 	if err != nil {
 		return false, err
 	}
@@ -350,7 +350,7 @@ func (db *INodeDB) MutateBIDForMount(tx RWTx, id INode, BID BlockID) error {
 		return err
 	}
 
-	children, err := db.GetDirContents(tx, id)
+	children, err := db.GetDirContents(tx, id, false)
 	if err != nil {
 		return err
 	}
@@ -591,7 +591,7 @@ type NameINode struct {
 	ID   INode
 }
 
-func (db *INodeDB) GetDirContents(tx RTx, id INode) ([]NameINode, error) {
+func (db *INodeDB) GetDirContents(tx RTx, id INode, includeDots bool) ([]NameINode, error) {
 	err := assertValidDir(tx, id)
 	if err != nil {
 		return nil, err
@@ -601,10 +601,15 @@ func (db *INodeDB) GetDirContents(tx RTx, id INode) ([]NameINode, error) {
 	prefix := make([]byte, 4)
 	binary.LittleEndian.PutUint32(prefix, uint32(id))
 
-	// start by adding entries for "." and ".."
-	node, err := getNodeRepr(tx, id)
-	names = append(names, NameINode{Name: ".", ID: id})
-	names = append(names, NameINode{Name: "..", ID: node.ParentINode})
+	if includeDots {
+		// start by adding entries for "." and ".."
+		node, err := getNodeRepr(tx, id)
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, NameINode{Name: ".", ID: id})
+		names = append(names, NameINode{Name: "..", ID: node.ParentINode})
+	}
 
 	c := tx.RBucket(ChildNodeBucket)
 

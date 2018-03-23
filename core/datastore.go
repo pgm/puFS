@@ -238,7 +238,7 @@ func (d *DataStore) GetDirContents(id INode) ([]*DirEntry, error) {
 		}
 
 		var names []NameINode
-		names, err = d.db.GetDirContents(tx, id)
+		names, err = d.db.GetDirContents(tx, id, true)
 		if err != nil {
 			return err
 		}
@@ -537,6 +537,7 @@ func (d *DataStore) CreateWritable(parent INode, name string) (INode, WritableRe
 }
 
 func freezeDir(tempDir string, freezer Freezer, dir *Dir) (BlockID, error) {
+	fmt.Printf("freezeDir\n")
 	f, err := ioutil.TempFile(tempDir, "dir")
 	if err != nil {
 		return NABlock, err
@@ -625,7 +626,7 @@ func collectUnpushed(db *INodeDB, tx RTx, inode INode, isPushed func(BlockID) (b
 	}
 
 	if node.IsDir {
-		children, err := db.GetDirContents(tx, inode)
+		children, err := db.GetDirContents(tx, inode, false)
 		if err != nil {
 			return err
 		}
@@ -641,6 +642,7 @@ func collectUnpushed(db *INodeDB, tx RTx, inode INode, isPushed func(BlockID) (b
 }
 
 func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) (BlockID, error) {
+	fmt.Printf("freezing %d\n", inode)
 	node, err := getNodeRepr(tx, inode)
 	if err != nil {
 		return NABlock, err
@@ -651,8 +653,14 @@ func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) 
 	}
 
 	if node.IsDir {
+		fmt.Printf("inode %d is a dir\n", inode)
 		// if this is a directory, then we need to compute blocks for all child inodes
-		children, err := db.GetDirContents(tx, inode)
+		children, err := db.GetDirContents(tx, inode, false)
+		if err != nil {
+			return NABlock, err
+		}
+
+		fmt.Printf("Node %d has %d children\n", inode, len(children))
 		dirTable := make([]DirEntry, 0, 100)
 		for _, child := range children {
 			//child.ID
@@ -700,6 +708,7 @@ func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) 
 	if node.LocalWritablePath == "" {
 		panic("LocalWritablePath is empty")
 	}
+	fmt.Printf("inode %d is a writable file: %s\n", inode, node.LocalWritablePath)
 
 	BID, err := freezer.AddFile(node.LocalWritablePath)
 	err = putNodeRepr(tx, inode, node)
