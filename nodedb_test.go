@@ -5,7 +5,6 @@ import (
 	"io/ioutil"
 	"testing"
 
-	bolt "github.com/coreos/bbolt"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,7 +22,7 @@ func TestNodeDbRW(t *testing.T) {
 	require := require.New(t)
 	d := testINodeDB()
 
-	d.update(func(tx *bolt.Tx) error {
+	d.update(func(tx RTx) error {
 		fmt.Println("Before")
 		printDbStats(tx)
 
@@ -36,7 +35,7 @@ func TestNodeDbRW(t *testing.T) {
 		return nil
 	})
 
-	d.view(func(tx *bolt.Tx) error {
+	d.view(func(tx RTx) error {
 		names, err := d.GetDirContents(tx, RootINode)
 		require.Nil(err)
 		require.EqualValues([]string{"a"}, names)

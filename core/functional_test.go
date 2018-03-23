@@ -16,7 +16,8 @@ func TestFreezePush(t *testing.T) {
 	require.Nil(err)
 
 	f := NewRemoteRefFactoryMem()
-	ds1 := NewDataStore(dir1, f)
+	ds1 := NewDataStore(dir1, f, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+
 	aID := createFile(require, ds1, RootINode, "a", content)
 	err = ds1.Push(RootINode, "sample-label")
 	require.Nil(err)
@@ -24,7 +25,7 @@ func TestFreezePush(t *testing.T) {
 
 	dir2, err := ioutil.TempDir("", "test")
 	require.Nil(err)
-	ds2 := NewDataStore(dir2, f)
+	ds2 := NewDataStore(dir2, f, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
 
 	err = ds2.MountByLabel(RootINode, "sample-label")
 	require.Nil(err)

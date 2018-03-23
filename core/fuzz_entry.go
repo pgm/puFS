@@ -2,30 +2,39 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"io/ioutil"
+	"os"
 	"regexp"
 	"strings"
 )
 
-func compileRegExp(exp string) *regexp.Regexp {
-	re, err := regexp.Compile(exp)
-	if err != nil {
-		panic(err)
-	}
-	return re
-}
-
-var MkdirStatement *regexp.Regexp = compileRegExp("d ([^ ]+)")
-var UnlinkStatement *regexp.Regexp = compileRegExp("u ([^ ]+)")
-var WriteStatement *regexp.Regexp = compileRegExp("w ([^ ]+)")
-var ReadStatement *regexp.Regexp = compileRegExp("r ([^ ]+)")
-var BlankStatement *regexp.Regexp = compileRegExp("^\\s*$")
-var StatementExps []*regexp.Regexp = []*regexp.Regexp{MkdirStatement, UnlinkStatement, WriteStatement, ReadStatement}
+var MkdirStatement *regexp.Regexp = regexp.MustCompile("^d ([^ ]+)$")
+var UnlinkStatement *regexp.Regexp = regexp.MustCompile("^u ([^ ]+)$")
+var WriteStatement *regexp.Regexp = regexp.MustCompile("^w ([^ ]+)$")
+var ReadStatement *regexp.Regexp = regexp.MustCompile("^r ([^ ]+)$")
+var ListStatement *regexp.Regexp = regexp.MustCompile("^l ([^ ]+)$")
+var FreezeStatement *regexp.Regexp = regexp.MustCompile("^f ([^ ]+)$")
+var PushStatement *regexp.Regexp = regexp.MustCompile("^p ([^ ]+) ([^ ]+)$")
+var MountStatement *regexp.Regexp = regexp.MustCompile("^m ([^ ]+) ([^ ]+)$")
+var UnmountStatement *regexp.Regexp = regexp.MustCompile("^M ([^ ]+)$")
+var SwapStatement *regexp.Regexp = regexp.MustCompile("^s$")
+var BlankStatement *regexp.Regexp = regexp.MustCompile("^\\s*$")
+var RenameStatement *regexp.Regexp = regexp.MustCompile("^R ([^ ]+) ([^ ]+)$")
+var StatementExps []*regexp.Regexp = []*regexp.Regexp{
+	MkdirStatement,
+	UnlinkStatement,
+	WriteStatement,
+	ReadStatement,
+	ListStatement,
+	FreezeStatement, PushStatement, MountStatement, UnmountStatement, SwapStatement, BlankStatement,
+	RenameStatement}
 
 var ParseError error = errors.New("Parse error")
 
 type Execution struct {
 	ds         *DataStore
+	ds2        *DataStore
 	errorCount int
 }
 
@@ -77,6 +86,41 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 		if err == nil {
 			_, err = e.ds.GetReadRef(inode)
 		}
+	} else if statementType == ListStatement {
+		inode, err := e.getINode(match[1])
+		if err == nil {
+			_, err = e.ds.GetDirContents(inode)
+		}
+	} else if statementType == FreezeStatement {
+		inode, err := e.getINode(match[1])
+		if err == nil {
+			_, err = e.ds.Freeze(inode)
+		}
+	} else if statementType == PushStatement {
+		inode, err := e.getINode(match[1])
+		if err == nil {
+			err = e.ds.Push(inode, match[2])
+		}
+	} else if statementType == MountStatement {
+		inode, err := e.getINode(match[1])
+		if err == nil {
+			err = e.ds.MountByLabel(inode, match[2])
+		}
+	} else if statementType == UnmountStatement {
+		inode, err := e.getINode(match[1])
+		if err == nil {
+			err = e.ds.Unmount(inode)
+		}
+	} else if statementType == SwapStatement {
+		e.ds, e.ds2 = e.ds2, e.ds
+	} else if statementType == RenameStatement {
+		srcParent, srcName, err := e.splitPath(match[1])
+		if err == nil {
+			dstParent, dstName, err := e.splitPath(match[2])
+			if err == nil {
+				err = e.ds.Rename(srcParent, srcName, dstParent, dstName)
+			}
+		}
 	} else if statementType == BlankStatement {
 		// do nothing
 	} else {
@@ -89,12 +133,15 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 }
 
 func executeScript(script string) (*Execution, error) {
-	dir, err := ioutil.TempDir("", "test")
+	dir, err := ioutil.TempDir("", "gofuzz")
 	if err != nil {
 		panic(err)
 	}
+	defer os.RemoveAll(dir)
 	e := &Execution{}
-	e.ds = NewDataStore(dir, nil)
+	f := NewRemoteRefFactoryMem()
+	e.ds = NewDataStore(dir, f, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	e.ds2 = NewDataStore(dir, f, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
 
 	lines := strings.Split(script, "\n")
 	for _, line := range lines {
@@ -107,7 +154,7 @@ func executeScript(script string) (*Execution, error) {
 			}
 		}
 		if !handledLine {
-			return nil, ParseError
+			return nil, fmt.Errorf("Could not parse \"%s\"", line)
 		}
 	}
 

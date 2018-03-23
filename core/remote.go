@@ -93,7 +93,11 @@ func (r *RemoteRefFactoryMem) SetRoot(name string, BID BlockID) error {
 }
 
 func (r *RemoteRefFactoryMem) GetRoot(name string) (BlockID, error) {
-	return r.roots[name], nil
+	BID, ok := r.roots[name]
+	if !ok {
+		return BID, UndefinedRootErr
+	}
+	return BID, nil
 }
 
 func (r *RemoteRefFactoryMem) GetChildNodes(node *NodeRepr) ([]*RemoteFile, error) {

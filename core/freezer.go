@@ -7,8 +7,6 @@ import (
 	"io"
 	"log"
 	"os"
-
-	bolt "github.com/coreos/bbolt"
 )
 
 var ChunkStat []byte = []byte("ChunkStat")
@@ -58,29 +56,13 @@ func (w *FrozenRefImp) Release() {
 
 type FreezerImp struct {
 	path string
-	db   *bolt.DB
+	db   KVStore
 	//	blocks map[BlockID]string
 }
 
-func NewFreezer(path string) *FreezerImp {
+func NewFreezer(path string, db KVStore) *FreezerImp {
 	chunkPath := path + "/chunks"
 	err := os.MkdirAll(chunkPath, 0700)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	db, err := bolt.Open(path+"/chunkstat.db", 0600, nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists(ChunkStat)
-		if err != nil {
-			log.Fatal(err)
-		}
-		return nil
-	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -130,8 +112,8 @@ func computeHash(path string) (BlockID, error) {
 }
 
 func (f *FreezerImp) writeChunkStatus(BID BlockID, isRemote bool) error {
-	err := f.db.Update(func(tx *bolt.Tx) error {
-		chunkStat := tx.Bucket(ChunkStat)
+	err := f.db.Update(func(tx RWTx) error {
+		chunkStat := tx.WBucket(ChunkStat)
 		value := make([]byte, 1)
 		if isRemote {
 			value[0] = 1
@@ -143,8 +125,8 @@ func (f *FreezerImp) writeChunkStatus(BID BlockID, isRemote bool) error {
 
 func (f *FreezerImp) IsPushed(BID BlockID) (bool, error) {
 	var pushed bool
-	err := f.db.View(func(tx *bolt.Tx) error {
-		chunkStat := tx.Bucket(ChunkStat)
+	err := f.db.View(func(tx RTx) error {
+		chunkStat := tx.RBucket(ChunkStat)
 		value := chunkStat.Get(BID[:])
 		pushed = value[0] != 0
 		return nil

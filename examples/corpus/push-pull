@@ -1,0 +1,9 @@
+d a
+d a/b
+d a/b/c
+w a/b/c/d
+p a X
+s
+d a2
+m a2 X
+r a2/b/c/d

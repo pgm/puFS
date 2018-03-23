@@ -5,3 +5,6 @@ examples/suppressions
 sply2-fuzz.zip
 core/examples
 debug.test
+core/core-fuzz.zip
+examples/old-crashers
+splyrepl/x

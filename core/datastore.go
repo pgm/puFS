@@ -12,8 +12,6 @@ import (
 	"os"
 	"regexp"
 	"time"
-
-	bolt "github.com/coreos/bbolt"
 )
 
 var NABlock BlockID = BlockID{}
@@ -45,17 +43,16 @@ const STALE_LEASE_DURATION = 1 * time.Hour
 
 ///////////////////////////
 
-func NewDataStore(path string, remoteRefFactory RemoteRefFactory) *DataStore {
-	dbFilename := path + "/db"
+func NewDataStore(path string, remoteRefFactory RemoteRefFactory, freezerKV KVStore, nodeKV KVStore) *DataStore {
 	freezerPath := path + "/freezer"
 	err := os.MkdirAll(freezerPath, 0700)
 	if err != nil {
 		log.Fatalf("%s: Could not create %s\n", err, freezerPath)
 	}
 	return &DataStore{path: path,
-		db:               NewINodeDB(dbFilename, 1000),
+		db:               NewINodeDB(1000, nodeKV),
 		writableStore:    NewWritableStore(path),
-		freezer:          NewFreezer(freezerPath),
+		freezer:          NewFreezer(freezerPath, freezerKV),
 		remoteRefFactory: remoteRefFactory}
 }
 
@@ -147,7 +144,7 @@ func (d *DataStore) Mount(inode INode, BID BlockID) error {
 		return err
 	}
 
-	err = d.db.update(func(tx *bolt.Tx) error {
+	err = d.db.update(func(tx RWTx) error {
 		err = d.db.MutateBIDForMount(tx, inode, BID)
 		if err != nil {
 			return err
@@ -163,16 +160,40 @@ func (d *DataStore) Mount(inode INode, BID BlockID) error {
 	return nil
 }
 
+func (d *DataStore) GetParent(inode INode) (INode, error) {
+	var err error
+	var node *NodeRepr
+
+	err = d.db.view(func(tx RTx) error {
+		node, err = getNodeRepr(tx, inode)
+		return err
+	})
+
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	return node.ParentINode, nil
+}
+
 func (d *DataStore) GetNodeID(parent INode, name string) (INode, error) {
 	var inode INode
 	var err error
+
+	if name == "." {
+		return parent, nil
+	}
+
+	if name == ".." {
+		return d.GetParent(parent)
+	}
 
 	err = validateName(name)
 	if err != nil {
 		return InvalidINode, err
 	}
 
-	err = d.db.update(func(tx *bolt.Tx) error {
+	err = d.db.update(func(tx RWTx) error {
 		err = d.loadLazyChildren(tx, parent)
 		if err != nil {
 			return err
@@ -192,20 +213,55 @@ func (d *DataStore) GetNodeID(parent INode, name string) (INode, error) {
 	return inode, err
 }
 
-func (d *DataStore) GetDirContents(id INode) ([]string, error) {
-	var names []string
-	var err error
+// func (db *INodeDB) GetDirNames(tx RTx, id INode) ([]string, error) {
+// 	nn, err := db.GetDirContents(tx, id)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	err = d.db.view(func(tx *bolt.Tx) error {
+// 	names := make([]string, 0, 100)
+// 	for _, t := range nn {
+// 		names = append(names, t.Name)
+// 	}
+
+// 	return names, nil
+// }
+
+func (d *DataStore) GetDirContents(id INode) ([]*DirEntry, error) {
+	var err error
+	var entries []*DirEntry
+
+	err = d.db.update(func(tx RWTx) error {
 		err = d.loadLazyChildren(tx, id)
 		if err != nil {
 			return err
 		}
 
-		names, err = d.db.GetDirNames(tx, id)
+		var names []NameINode
+		names, err = d.db.GetDirContents(tx, id)
 		if err != nil {
 			return err
 		}
+
+		entries = make([]*DirEntry, 0, len(names))
+		for _, n := range names {
+			var node *NodeRepr
+			node, err = getNodeRepr(tx, n.ID)
+			entries = append(entries, &DirEntry{Name: n.Name,
+				IsDir:   node.IsDir,
+				Size:    node.Size,
+				ModTime: node.ModTime,
+
+				BID: node.BID,
+
+				URL:  node.URL,
+				ETag: node.ETag,
+
+				Bucket:     node.Bucket,
+				Key:        node.Key,
+				Generation: node.Generation})
+		}
+
 		return nil
 	})
 
@@ -213,11 +269,14 @@ func (d *DataStore) GetDirContents(id INode) ([]string, error) {
 		return nil, err
 	}
 
-	return names, nil
+	return entries, nil
 }
 
-func (d *DataStore) loadLazyChildren(tx *bolt.Tx, id INode) error {
+func (d *DataStore) loadLazyChildren(tx RWTx, id INode) error {
 	node, err := getNodeRepr(tx, id)
+	if err != nil {
+		return err
+	}
 	if node.IsDir && node.IsDeferredChildFetch {
 		if node.BID != NABlock {
 			remoteRef, err := d.remoteRefFactory.GetRef(node)
@@ -285,7 +344,7 @@ func (d *DataStore) AddRemoteGCS(parent INode, name string, bucket string, key s
 		return InvalidINode, err
 	}
 
-	err = d.db.update(func(tx *bolt.Tx) error {
+	err = d.db.update(func(tx RWTx) error {
 		err = d.loadLazyChildren(tx, parent)
 		if err != nil {
 			return err
@@ -316,7 +375,7 @@ func (d *DataStore) MakeDir(parent INode, name string) (INode, error) {
 
 	var inode INode
 
-	err = d.db.update(func(tx *bolt.Tx) error {
+	err = d.db.update(func(tx RWTx) error {
 		err = d.loadLazyChildren(tx, parent)
 		if err != nil {
 			return err
@@ -332,13 +391,63 @@ func (d *DataStore) MakeDir(parent INode, name string) (INode, error) {
 	return inode, err
 }
 
+func (d *DataStore) PrintDebug() {
+	d.db.view(func(tx RTx) error {
+		printDbStats(tx)
+		return nil
+	})
+}
+
+func (d *DataStore) Rename(srcParent INode, srcName string, dstParent INode, dstName string) error {
+	err := validateName(srcName)
+	if err != nil {
+		return err
+	}
+
+	err = validateName(dstName)
+	if err != nil {
+		return err
+	}
+
+	err = d.db.update(func(tx RWTx) error {
+		err = d.loadLazyChildren(tx, srcParent)
+		if err != nil {
+			return err
+		}
+
+		err = d.loadLazyChildren(tx, dstParent)
+		if err != nil {
+			return err
+		}
+
+		// check to see if destination exists
+		_, err = d.db.GetNodeID(tx, dstParent, dstName)
+		if err != NoSuchNodeErr {
+			if err == nil {
+				// a file already exists with the destination's name
+				err = d.db.RemoveNode(tx, dstParent, dstName)
+				if err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
+		}
+
+		// if we've reached here, we can safely rename
+		return d.db.Rename(tx, srcParent, srcName, dstParent, dstName)
+	})
+
+	return err
+}
+
 func (d *DataStore) Remove(parent INode, name string) error {
 	err := validateName(name)
 	if err != nil {
 		return err
 	}
 
-	err = d.db.update(func(tx *bolt.Tx) error {
+	err = d.db.update(func(tx RWTx) error {
 		err = d.loadLazyChildren(tx, parent)
 		if err != nil {
 			return err
@@ -370,7 +479,7 @@ func (d *DataStore) AddRemoteURL(parent INode, name string, URL string) (INode, 
 
 	modTime := time.Now()
 
-	err = d.db.update(func(tx *bolt.Tx) error {
+	err = d.db.update(func(tx RWTx) error {
 		err = d.loadLazyChildren(tx, parent)
 		if err != nil {
 			return err
@@ -401,7 +510,7 @@ func (d *DataStore) CreateWritable(parent INode, name string) (INode, WritableRe
 		return InvalidINode, nil, err
 	}
 
-	err = d.db.update(func(tx *bolt.Tx) error {
+	err = d.db.update(func(tx RWTx) error {
 		err = d.loadLazyChildren(tx, parent)
 		if err != nil {
 			return err
@@ -459,7 +568,7 @@ func (ds *DataStore) Push(inode INode, name string) error {
 	}
 
 	blockList := make([]BlockID, 0, 100)
-	err = ds.db.view(func(tx *bolt.Tx) error {
+	err = ds.db.view(func(tx RTx) error {
 		err = collectUnpushed(ds.db, tx, inode, isPushed, &blockList)
 		if err != nil {
 			return err
@@ -501,7 +610,7 @@ func (ds *DataStore) Push(inode INode, name string) error {
 	return nil
 }
 
-func collectUnpushed(db *INodeDB, tx *bolt.Tx, inode INode, isPushed func(BlockID) (bool, error), blockList *[]BlockID) error {
+func collectUnpushed(db *INodeDB, tx RTx, inode INode, isPushed func(BlockID) (bool, error), blockList *[]BlockID) error {
 	node, err := getNodeRepr(tx, inode)
 	if err != nil {
 		return err
@@ -531,7 +640,7 @@ func collectUnpushed(db *INodeDB, tx *bolt.Tx, inode INode, isPushed func(BlockI
 	return nil
 }
 
-func freeze(tempDir string, freezer Freezer, db *INodeDB, tx *bolt.Tx, inode INode) (BlockID, error) {
+func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) (BlockID, error) {
 	node, err := getNodeRepr(tx, inode)
 	if err != nil {
 		return NABlock, err
@@ -612,7 +721,7 @@ func (d *DataStore) Freeze(inode INode) (BlockID, error) {
 	var err error
 	var BID BlockID
 
-	err = d.db.update(func(tx *bolt.Tx) error {
+	err = d.db.update(func(tx RWTx) error {
 		BID, err = freeze(d.path, d.freezer, d.db, tx, inode)
 		return nil
 	})
@@ -628,7 +737,7 @@ func (d *DataStore) GetReadRef(inode INode) (io.ReadSeeker, error) {
 	var node *NodeRepr
 	var err error
 
-	err = d.db.view(func(tx *bolt.Tx) error {
+	err = d.db.view(func(tx RTx) error {
 		node, err = getNodeRepr(tx, inode)
 		if err != nil {
 			return err

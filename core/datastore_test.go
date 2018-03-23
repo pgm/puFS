@@ -10,6 +10,11 @@ import (
 
 func createFile(require *require.Assertions, d *DataStore, parent INode, name string, content string) INode {
 	aID, w, err := d.CreateWritable(parent, name)
+	// d.db.db.View(func(tx RTx) error {
+	// 	fmt.Println("Right after CreateWrtiable")
+	// 	printDbStats(tx)
+	// 	return nil
+	// })
 	require.Nil(err)
 	_, err = w.Write([]byte(content))
 	require.Nil(err)
@@ -17,13 +22,16 @@ func createFile(require *require.Assertions, d *DataStore, parent INode, name st
 	return aID
 }
 
+func newDataStore(dir string) *DataStore {
+	return NewDataStore(dir, nil, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+}
+
 func testDataStore() *DataStore {
 	dir, err := ioutil.TempDir("", "test")
 	if err != nil {
 		panic(err)
 	}
-	ds := NewDataStore(dir, nil)
-	return ds
+	return newDataStore(dir)
 }
 
 func TestPersistence(t *testing.T) {
@@ -33,11 +41,13 @@ func TestPersistence(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	ds1 := NewDataStore(dir, nil)
+	freezerStore := NewMemStore([][]byte{ChunkStat})
+	nodeStore := NewMemStore([][]byte{ChildNodeBucket, NodeBucket})
+	ds1 := NewDataStore(dir, nil, freezerStore, nodeStore)
 	aID := createFile(require, ds1, RootINode, "a", "data")
 	ds1.Close()
 
-	ds2 := NewDataStore(dir, nil)
+	ds2 := NewDataStore(dir, nil, freezerStore, nodeStore)
 
 	r, err := ds2.GetReadRef(aID)
 	require.Nil(err)
@@ -47,6 +57,24 @@ func TestPersistence(t *testing.T) {
 	require.Nil(err)
 
 	require.Equal("data", string(buffer))
+}
+
+func TestRename(t *testing.T) {
+	require := require.New(t)
+
+	d := testDataStore()
+
+	createFile(require, d, RootINode, "a", "data")
+	d.PrintDebug()
+	fmt.Println("-----")
+	err := d.Rename(RootINode, "a", RootINode, "b")
+	require.Nil(err)
+	d.PrintDebug()
+
+	_, err = d.GetNodeID(RootINode, "a")
+	require.Equal(NoSuchNodeErr, err)
+	_, err = d.GetNodeID(RootINode, "b")
+	require.Nil(err)
 }
 
 func TestWriteRead(t *testing.T) {
