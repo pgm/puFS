@@ -1,6 +1,7 @@
 package sply2
 
 import (
+	"encoding/gob"
 	"errors"
 	"io"
 	"strings"
@@ -70,9 +71,11 @@ func NewRemoteObject(client *storage.Client, bucketName string, key string) (*Re
 }
 
 type RemoteRefFactoryImp struct {
-	CASBucket    string
-	CASKeyPrefix string
-	GCSClient    *storage.Client
+	Bucket         string
+	RootKeyPrefix  string
+	LeaseKeyPrefix string
+	CASKeyPrefix   string
+	GCSClient      *storage.Client
 }
 
 func (rrf *RemoteRefFactoryImp) GetChildNodes(node *core.NodeRepr) ([]*core.RemoteFile, error) {
@@ -117,16 +120,56 @@ func (rrf *RemoteRefFactoryImp) GetChildNodes(node *core.NodeRepr) ([]*core.Remo
 	return result, nil
 }
 
+type Lease struct {
+	Expiry time.Time
+	BID    core.BlockID
+}
+
 func (rrf *RemoteRefFactoryImp) SetLease(name string, expiry time.Time, BID core.BlockID) error {
-	panic("unimp")
+	ctx := context.Background()
+	b := rrf.GCSClient.Bucket(rrf.Bucket)
+	o := b.Object(rrf.LeaseKeyPrefix + name)
+	w := o.NewWriter(ctx)
+	defer w.Close()
+	enc := gob.NewEncoder(w)
+	err := enc.Encode(&Lease{Expiry: expiry, BID: BID})
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (rrf *RemoteRefFactoryImp) SetRoot(name string, BID core.BlockID) error {
-	panic("unimp")
+	ctx := context.Background()
+	b := rrf.GCSClient.Bucket(rrf.Bucket)
+	o := b.Object(rrf.RootKeyPrefix + name)
+	w := o.NewWriter(ctx)
+	defer w.Close()
+	enc := gob.NewEncoder(w)
+	err := enc.Encode(&BID)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (rrf *RemoteRefFactoryImp) GetRoot(name string) (core.BlockID, error) {
-	panic("unimp")
+	ctx := context.Background()
+	b := rrf.GCSClient.Bucket(rrf.Bucket)
+	o := b.Object(rrf.RootKeyPrefix + name)
+	r, err := o.NewReader(ctx)
+	if err != nil {
+		return core.NABlock, err
+	}
+
+	defer r.Close()
+	dec := gob.NewDecoder(r)
+	var BID core.BlockID
+	err = dec.Decode(&BID)
+	if err != nil {
+		return core.NABlock, err
+	}
+	return BID, nil
 }
 
 func (rrf *RemoteRefFactoryImp) GetGCSAttr(bucket string, key string) (*core.GCSAttrs, error) {
@@ -148,7 +191,7 @@ func (rrf *RemoteRefFactoryImp) Push(BID core.BlockID, rr io.Reader) error {
 	// TODO: need to add a check for that case
 	key := core.GetBlockKey(rrf.CASKeyPrefix, BID)
 	// fmt.Println("bucket " + rrf.CASBucket + " " + key)
-	CASBucketRef := rrf.GCSClient.Bucket(rrf.CASBucket)
+	CASBucketRef := rrf.GCSClient.Bucket(rrf.Bucket)
 	objHandle := CASBucketRef.Object(key).If(storage.Conditions{DoesNotExist: true})
 	writer := objHandle.NewWriter(ctx)
 	defer writer.Close()
@@ -163,8 +206,13 @@ func (rrf *RemoteRefFactoryImp) Push(BID core.BlockID, rr io.Reader) error {
 	return nil
 }
 
-func NewRemoteRefFactory(client *storage.Client, CASBucket string, CASKeyPrefix string) *RemoteRefFactoryImp {
-	return &RemoteRefFactoryImp{GCSClient: client, CASBucket: CASBucket, CASKeyPrefix: CASKeyPrefix}
+func NewRemoteRefFactory(client *storage.Client, Bucket string, KeyPrefix string) *RemoteRefFactoryImp {
+	if !strings.HasSuffix(KeyPrefix, "/") {
+		panic("Prefix must end in /")
+	}
+	return &RemoteRefFactoryImp{GCSClient: client, Bucket: Bucket, CASKeyPrefix: KeyPrefix + "CAS/",
+		RootKeyPrefix:  KeyPrefix + "root/",
+		LeaseKeyPrefix: KeyPrefix + "lease/"}
 }
 
 func (rrf *RemoteRefFactoryImp) GetRef(node *core.NodeRepr) (core.RemoteRef, error) {
@@ -177,7 +225,7 @@ func (rrf *RemoteRefFactoryImp) GetRef(node *core.NodeRepr) (core.RemoteRef, err
 			CASBucketRef := rrf.GCSClient.Bucket(node.Bucket)
 			remote = &RemoteGCS{Bucket: CASBucketRef, Key: node.Key, Size: node.Size}
 		} else {
-			CASBucketRef := rrf.GCSClient.Bucket(rrf.CASBucket)
+			CASBucketRef := rrf.GCSClient.Bucket(rrf.Bucket)
 			remote = &RemoteGCS{Bucket: CASBucketRef, Key: core.GetBlockKey(rrf.CASKeyPrefix, node.BID), Size: node.Size}
 		}
 	}
