@@ -2,12 +2,14 @@ package sply2
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
 	// Imports the Google Cloud Storage client package.
 
 	"cloud.google.com/go/storage"
+	"github.com/pgm/sply2/core"
 	"golang.org/x/net/context"
 )
 
@@ -65,51 +67,81 @@ func NewRemoteObject(client *storage.Client, bucketName string, key string) (*Re
 	return &RemoteGCS{Bucket: bucket, Key: key, Generation: attr.Generation, Size: attr.Size}, nil
 }
 
-func getGCSAttr(bucket string, key string) (int64, int64, time.Time, bool, error) {
-	panic("unimp")
-}
-
 type RemoteRefFactoryImp struct {
 	CASBucket    string
 	CASKeyPrefix string
 	GCSClient    *storage.Client
 }
 
-// func (rrf *RemoteRefFactoryImp) Push(BID BlockID, rr io.Reader) error {
-// 	ctx := context.Background()
-// 	// upload only if generation == 0, which means this upload will fail if any object exists with the key
-// 	// TODO: need to add a check for that case
-// 	key := getBlockKey(rrf.CASKeyPrefix, BID)
-// 	fmt.Println("bucket " + rrf.CASBucket + " " + key)
-// 	CASBucketRef := rrf.GCSClient.Bucket(rrf.CASBucket)
-// 	objHandle := CASBucketRef.Object(key).If(storage.Conditions{DoesNotExist: true})
-// 	writer := objHandle.NewWriter(ctx)
-// 	defer writer.Close()
+func (rrf *RemoteRefFactoryImp) GetChildNodes(node *core.NodeRepr) ([]*core.RemoteFile, error) {
+	panic("unimp")
+}
 
-// 	n, err := io.Copy(writer, rr)
-// 	if err != nil {
-// 		return err
-// 	}
+func (rrf *RemoteRefFactoryImp) SetLease(name string, expiry time.Time, BID core.BlockID) error {
+	panic("unimp")
+}
 
-// 	fmt.Printf("Bytes copied: %d\n", n)
+func (rrf *RemoteRefFactoryImp) SetRoot(name string, BID core.BlockID) error {
+	panic("unimp")
+}
 
-// 	return nil
-// }
+func (rrf *RemoteRefFactoryImp) GetRoot(name string) (core.BlockID, error) {
+	panic("unimp")
+}
 
-// func NewRemoteRefFactory(client *storage.Client, CASBucket string, CASKeyPrefix string) *RemoteRefFactoryImp {
-// 	return &RemoteRefFactoryImp{GCSClient: client, CASBucket: CASBucket, CASKeyPrefix: CASKeyPrefix}
-// }
+func (rrf *RemoteRefFactoryImp) GetGCSAttr(bucket string, key string) (*core.GCSAttrs, error) {
+	ctx := context.Background()
+	b := rrf.GCSClient.Bucket(bucket)
+	o := b.Object(key)
+	attrs, err := o.Attrs(ctx)
 
-// func (rrf *RemoteRefFactoryImp) GetRef(node *core.NodeRepr) (RemoteRef, error) {
-// 	var remote RemoteRef
+	if err != nil {
+		return nil, err
+	}
 
-// 	if node.URL != "" {
-// 		remote = &RemoteURL{URL: node.URL, ETag: node.ETag, Length: node.Size}
-// 	} else {
-// 		CASBucketRef := rrf.GCSClient.Bucket(rrf.CASBucket)
+	return &core.GCSAttrs{Generation: attrs.Generation, IsDir: false, ModTime: attrs.Updated, Size: attrs.Size}, nil
+}
 
-// 		remote = &RemoteGCS{Bucket: CASBucketRef, Key: getBlockKey(rrf.CASKeyPrefix, node.BID), Size: node.Size}
-// 	}
+func (rrf *RemoteRefFactoryImp) Push(BID core.BlockID, rr io.Reader) error {
+	ctx := context.Background()
+	// upload only if generation == 0, which means this upload will fail if any object exists with the key
+	// TODO: need to add a check for that case
+	key := core.GetBlockKey(rrf.CASKeyPrefix, BID)
+	fmt.Println("bucket " + rrf.CASBucket + " " + key)
+	CASBucketRef := rrf.GCSClient.Bucket(rrf.CASBucket)
+	objHandle := CASBucketRef.Object(key).If(storage.Conditions{DoesNotExist: true})
+	writer := objHandle.NewWriter(ctx)
+	defer writer.Close()
 
-// 	return remote, nil
-// }
+	n, err := io.Copy(writer, rr)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Bytes copied: %d\n", n)
+
+	return nil
+}
+
+func NewRemoteRefFactory(client *storage.Client, CASBucket string, CASKeyPrefix string) *RemoteRefFactoryImp {
+	return &RemoteRefFactoryImp{GCSClient: client, CASBucket: CASBucket, CASKeyPrefix: CASKeyPrefix}
+}
+
+func (rrf *RemoteRefFactoryImp) GetRef(node *core.NodeRepr) (core.RemoteRef, error) {
+	var remote core.RemoteRef
+
+	if node.URL != "" {
+		remote = &RemoteURL{URL: node.URL, ETag: node.ETag, Length: node.Size}
+	} else {
+		if node.Key != "" {
+			CASBucketRef := rrf.GCSClient.Bucket(node.Bucket)
+			remote = &RemoteGCS{Bucket: CASBucketRef, Key: node.Key, Size: node.Size}
+		} else {
+			CASBucketRef := rrf.GCSClient.Bucket(rrf.CASBucket)
+			remote = &RemoteGCS{Bucket: CASBucketRef, Key: core.GetBlockKey(rrf.CASKeyPrefix, node.BID), Size: node.Size}
+		}
+	}
+	fmt.Printf("remote=%v\n", remote)
+
+	return remote, nil
+}

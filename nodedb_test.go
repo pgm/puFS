@@ -1,49 +1,41 @@
 package sply2
 
-import (
-	"fmt"
-	"io/ioutil"
-	"testing"
+// func testINodeDB() *INodeDB {
+// 	dir, err := ioutil.TempDir("", "test")
+// 	fmt.Printf("dir=%s\n", dir)
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	ds := NewINodeDB(dir+"/db", 100)
+// 	return ds
+// }
 
-	"github.com/stretchr/testify/require"
-)
+// func TestNodeDbRW(t *testing.T) {
+// 	require := require.New(t)
+// 	d := testINodeDB()
 
-func testINodeDB() *INodeDB {
-	dir, err := ioutil.TempDir("", "test")
-	fmt.Printf("dir=%s\n", dir)
-	if err != nil {
-		panic(err)
-	}
-	ds := NewINodeDB(dir+"/db", 100)
-	return ds
-}
+// 	d.update(func(tx RTx) error {
+// 		fmt.Println("Before")
+// 		printDbStats(tx)
 
-func TestNodeDbRW(t *testing.T) {
-	require := require.New(t)
-	d := testINodeDB()
+// 		_, err := d.AddDir(tx, RootINode, "a")
 
-	d.update(func(tx RTx) error {
-		fmt.Println("Before")
-		printDbStats(tx)
+// 		require.Nil(err)
+// 		fmt.Println("After")
+// 		printDbStats(tx)
 
-		_, err := d.AddDir(tx, RootINode, "a")
+// 		return nil
+// 	})
 
-		require.Nil(err)
-		fmt.Println("After")
-		printDbStats(tx)
+// 	d.view(func(tx RTx) error {
+// 		names, err := d.GetDirContents(tx, RootINode)
+// 		require.Nil(err)
+// 		require.EqualValues([]string{"a"}, names)
 
-		return nil
-	})
+// 		node, err := d.GetNode(tx, RootINode, "a")
+// 		require.Nil(err)
+// 		require.True(node.IsDir)
 
-	d.view(func(tx RTx) error {
-		names, err := d.GetDirContents(tx, RootINode)
-		require.Nil(err)
-		require.EqualValues([]string{"a"}, names)
-
-		node, err := d.GetNode(tx, RootINode, "a")
-		require.Nil(err)
-		require.True(node.IsDir)
-
-		return nil
-	})
-}
+// 		return nil
+// 	})
+// }

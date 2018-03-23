@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/pgm/sply2/core"
 )
 
 type RemoteURL struct {
@@ -49,15 +51,15 @@ func (r *RemoteURL) Copy(offset int64, len int64, writer io.Writer) error {
 	return nil
 }
 
-func getURLAttr(url string) (string, int64, error) {
+func (rrf *RemoteRefFactoryImp) GetHTTPAttr(url string) (*core.HTTPAttrs, error) {
 	res, err := http.Head(url)
 	if err != nil {
-		return "", 0, err
+		return nil, err
 	}
 	contentlength := res.ContentLength
 	etag := res.Header.Get("ETag")
 	// rangeDef := res.Header.Get("Accept-Ranges")
 	// acceptRanges := rangeDef == "bytes"
 
-	return etag, contentlength, nil
+	return &core.HTTPAttrs{ETag: etag, Size: contentlength}, nil
 }

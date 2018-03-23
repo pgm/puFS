@@ -64,7 +64,7 @@ func NewRemoteRefFactoryMem() *RemoteRefFactoryMem {
 }
 
 func (r *RemoteRefFactoryMem) GetRef(node *NodeRepr) (RemoteRef, error) {
-	key := getBlockKey(r.prefix, node.BID)
+	key := GetBlockKey(r.prefix, node.BID)
 	b, ok := r.objects[key]
 	if !ok {
 		panic("missing block")
@@ -77,7 +77,7 @@ func (r *RemoteRefFactoryMem) Push(BID BlockID, rr io.Reader) error {
 	if err != nil {
 		panic(err)
 	}
-	key := getBlockKey(r.prefix, BID)
+	key := GetBlockKey(r.prefix, BID)
 	r.objects[key] = b
 	return nil
 }
@@ -142,6 +142,6 @@ func (r *RemoteRefFactoryMem) GetChildNodes(node *NodeRepr) ([]*RemoteFile, erro
 	return nil, nil
 }
 
-func getBlockKey(CASKeyPrefix string, BID BlockID) string {
+func GetBlockKey(CASKeyPrefix string, BID BlockID) string {
 	return CASKeyPrefix + base64.URLEncoding.EncodeToString(BID[:])
 }

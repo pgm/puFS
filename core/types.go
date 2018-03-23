@@ -174,3 +174,23 @@ func (m *Bucket) Delete(key []byte) error {
 func generateUniqueString() string {
 	return time.Now().Format(time.RFC3339Nano)
 }
+
+type GCSAttrs struct {
+	Generation int64
+	Size       int64
+	ModTime    time.Time
+	IsDir      bool
+}
+
+type GCSClient interface {
+	GetGCSAttr(bucket string, key string) (*GCSAttrs, error)
+}
+
+type HTTPAttrs struct {
+	ETag string
+	Size int64
+}
+
+type HTTPClient interface {
+	GetHTTPAttr(url string) (*HTTPAttrs, error)
+}

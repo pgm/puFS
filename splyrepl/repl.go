@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"io"
 	"io/ioutil"
+	"log"
 	"path"
 	"strings"
 
@@ -11,12 +13,17 @@ import (
 	"os"
 	"regexp"
 
+	"cloud.google.com/go/storage"
 	"github.com/chzyer/readline"
 	"github.com/pgm/sply2"
 	"github.com/pgm/sply2/core"
+	"google.golang.org/api/option"
 )
 
+var GCSUrlExp *regexp.Regexp = regexp.MustCompile("^gs://([^/]+)/(.+)$")
+
 var ChdirStatement *regexp.Regexp = regexp.MustCompile("^cd ([^ ]+)$")
+var AddUrlStatement *regexp.Regexp = regexp.MustCompile("^addurl ([^ ]+) ([^ ]+)$")
 var MkdirStatement *regexp.Regexp = regexp.MustCompile("^mkdir ([^ ]+)$")
 var UnlinkStatement *regexp.Regexp = regexp.MustCompile("^rm ([^ ]+)$")
 var WriteStatement *regexp.Regexp = regexp.MustCompile("^touch ([^ ]+)$")
@@ -31,6 +38,7 @@ var RenameStatement *regexp.Regexp = regexp.MustCompile("^mv ([^ ]+) ([^ ]+)$")
 var StatementExps []*regexp.Regexp = []*regexp.Regexp{
 	ChdirStatement,
 	MkdirStatement,
+	AddUrlStatement,
 	UnlinkStatement,
 	WriteStatement,
 	ReadStatement,
@@ -108,6 +116,24 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 			if err == nil {
 				_, err = w.Write([]byte("hello"))
 				w.Release()
+			}
+		}
+	} else if statementType == AddUrlStatement {
+		parent, name, err = e.splitPath(match[2])
+
+		if err == nil {
+			url := match[1]
+			gcsmatch := GCSUrlExp.FindStringSubmatch(url)
+			if match != nil {
+				bucket := gcsmatch[1]
+				key := gcsmatch[2]
+				if strings.HasSuffix("/", key) {
+					err = errors.New("Unimplemented: trailing / used to specify key is a directory")
+				} else {
+					_, err = e.ds.AddRemoteGCS(parent, name, bucket, key)
+				}
+			} else {
+				_, err = e.ds.AddRemoteURL(parent, name, url)
 			}
 		}
 	} else if statementType == ReadStatement {
@@ -193,9 +219,22 @@ func NewDataStore(dir string) *Execution {
 		panic(err)
 	}
 
-	f := core.NewRemoteRefFactoryMem()
+	ctx := context.Background()
+	//	projectID := "gcs-test-1136"
+
+	// Creates a client.
+	client, err := storage.NewClient(ctx, option.WithServiceAccountFile("/Users/pmontgom/gcs-keys/gcs-test-b3b10d9077bb.json"))
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
+	}
+	bucketName := "gcs-test-1136"
+	f := sply2.NewRemoteRefFactory(client, bucketName, "blocks/")
+	// if err != nil {
+	// 	log.Fatalf("Failed to create remote: %v", err)
+	// }
 	ds := core.NewDataStore(dir, f, sply2.NewBoltDB(path.Join(dir, "freezer.db"), [][]byte{core.ChunkStat}),
 		sply2.NewBoltDB(path.Join(dir, "nodes.db"), [][]byte{core.ChildNodeBucket, core.NodeBucket}))
+	ds.SetClients(f, f)
 	return &Execution{ds: ds, cwd: "/"}
 }
 

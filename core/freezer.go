@@ -2,7 +2,7 @@ package core
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"log"
@@ -75,7 +75,7 @@ func (f *FreezerImp) Close() error {
 }
 
 func (f *FreezerImp) getPath(BID BlockID) string {
-	filename := fmt.Sprintf("%s/%s", f.path, hex.EncodeToString(BID[:]))
+	filename := fmt.Sprintf("%s/%s", f.path, base64.URLEncoding.EncodeToString(BID[:]))
 	return filename
 }
 
@@ -181,17 +181,23 @@ func (f *FreezerImp) AddBlock(BID BlockID, remoteRef RemoteRef) error {
 
 	filename := f.getPath(BID)
 
+	_, err = os.Stat(filename)
+	fmt.Printf("attempting to create %s (%s)\n", filename, err)
 	fi, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR|os.O_EXCL, 0600)
+	fmt.Printf("err (%s)\n", err)
 	if err != nil {
 		return err
 	}
 
 	defer fi.Close()
 
+	fmt.Printf("Performing copy of 0-%d\n", remoteRef.GetSize())
 	err = remoteRef.Copy(0, remoteRef.GetSize(), fi)
+	fmt.Printf("err from copy %s\n", err)
 	if err != nil {
 		return err
 	}
+	// s, err = os.Stat(filename)
 
 	err = f.writeChunkStatus(BID, true)
 	if err != nil {

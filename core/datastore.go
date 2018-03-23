@@ -34,6 +34,9 @@ type DataStore struct {
 	remoteRefFactory RemoteRefFactory
 	mounts           []*Mount
 	// locker        *INodeLocker
+
+	httpClient HTTPClient
+	gcsClient  GCSClient
 }
 
 // default expiry is 48 hours
@@ -43,6 +46,11 @@ const DEFAULT_EXPIRY = 2 * 24 * time.Hour
 const STALE_LEASE_DURATION = 1 * time.Hour
 
 ///////////////////////////
+
+func (d *DataStore) SetClients(httpClient HTTPClient, gcsClient GCSClient) {
+	d.httpClient = httpClient
+	d.gcsClient = gcsClient
+}
 
 func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory, freezerKV KVStore, nodeKV KVStore) *DataStore {
 	freezerPath := path.Join(storagePath, "freezer")
@@ -389,7 +397,7 @@ func (d *DataStore) AddRemoteGCS(parent INode, name string, bucket string, key s
 		return InvalidINode, err
 	}
 
-	generation, size, modTime, isDir, err := getGCSAttr(bucket, key)
+	attrs, err := d.gcsClient.GetGCSAttr(bucket, key)
 	if err != nil {
 		return InvalidINode, err
 	}
@@ -400,7 +408,7 @@ func (d *DataStore) AddRemoteGCS(parent INode, name string, bucket string, key s
 			return err
 		}
 
-		inode, err = d.db.AddRemoteGCS(tx, parent, name, bucket, key, generation, size, modTime, isDir)
+		inode, err = d.db.AddRemoteGCS(tx, parent, name, bucket, key, attrs.Generation, attrs.Size, attrs.ModTime, attrs.IsDir)
 		if err != nil {
 			return err
 		}
@@ -522,7 +530,7 @@ func (d *DataStore) AddRemoteURL(parent INode, name string, URL string) (INode, 
 		return InvalidINode, err
 	}
 
-	etag, size, err := getURLAttr(URL)
+	attrs, err := d.httpClient.GetHTTPAttr(URL)
 	if err != nil {
 		return InvalidINode, err
 	}
@@ -535,7 +543,7 @@ func (d *DataStore) AddRemoteURL(parent INode, name string, URL string) (INode, 
 			return err
 		}
 
-		inode, err = d.db.AddRemoteURL(tx, parent, name, URL, etag, size, modTime)
+		inode, err = d.db.AddRemoteURL(tx, parent, name, URL, attrs.ETag, attrs.Size, modTime)
 		if err != nil {
 			return err
 		}
@@ -837,6 +845,7 @@ func (d *DataStore) GetReadRef(inode INode) (io.ReadSeeker, error) {
 }
 
 func (d *DataStore) pullIntoFreezer(node *NodeRepr) error {
+	fmt.Printf("Pulling %s/%s\n", node.Bucket, node.Key)
 	remote, err := d.remoteRefFactory.GetRef(node)
 	if err != nil {
 		return err
@@ -850,11 +859,4 @@ func validateName(name string) error {
 		return nil
 	}
 	return InvalidCharFilenameErr
-}
-
-func getGCSAttr(bucket string, key string) (int64, int64, time.Time, bool, error) {
-	panic("unimp")
-}
-func getURLAttr(url string) (string, int64, error) {
-	panic("unimp")
 }
