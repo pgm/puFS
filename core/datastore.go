@@ -787,7 +787,7 @@ func (d *DataStore) pullIntoFreezer(node *NodeRepr) error {
 }
 
 func validateName(name string) error {
-	if ValidNameRegExp.MatchString(name) {
+	if name != "." && name != ".." && ValidNameRegExp.MatchString(name) {
 		return nil
 	}
 	return InvalidCharFilenameErr

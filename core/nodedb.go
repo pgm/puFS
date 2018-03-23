@@ -601,6 +601,11 @@ func (db *INodeDB) GetDirContents(tx RTx, id INode) ([]NameINode, error) {
 	prefix := make([]byte, 4)
 	binary.LittleEndian.PutUint32(prefix, uint32(id))
 
+	// start by adding entries for "." and ".."
+	node, err := getNodeRepr(tx, id)
+	names = append(names, NameINode{Name: ".", ID: id})
+	names = append(names, NameINode{Name: "..", ID: node.ParentINode})
+
 	c := tx.RBucket(ChildNodeBucket)
 
 	c.ForEachWithPrefix(prefix, func(k []byte, v []byte) error {
