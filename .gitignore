@@ -8,3 +8,5 @@ debug.test
 core/core-fuzz.zip
 examples/old-crashers
 splyrepl/x
+splyrepl/repl
+splyrepl/splyrepl.history

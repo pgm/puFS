@@ -12,7 +12,7 @@ type BlockID [32]byte
 type Freezer interface {
 	GetRef(BID BlockID) (FrozenRef, error)
 	AddBlock(BID BlockID, remoteRef RemoteRef) error
-	AddFile(path string) (BlockID, error)
+	AddFile(path string) (*NewBlock, error)
 	IsPushed(BID BlockID) (bool, error)
 }
 

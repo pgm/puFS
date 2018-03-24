@@ -115,6 +115,7 @@ func (d *DataStore) MountByLabel(inode INode, label string) error {
 	if err != nil {
 		return err
 	}
+
 	return d.Mount(inode, BID)
 }
 
@@ -174,6 +175,10 @@ func (d *DataStore) Unmount(inode INode) error {
 }
 
 func (d *DataStore) Mount(inode INode, BID BlockID) error {
+	if BID == NABlock {
+		panic("Cannot mount invalid block")
+	}
+
 	for _, m := range d.mounts {
 		if m.mountPoint == inode {
 			return AlreadyMountPointErr
@@ -593,11 +598,11 @@ func (d *DataStore) CreateWritable(parent INode, name string) (INode, WritableRe
 	return inode, &WritableRefImp{filename, 0}, err
 }
 
-func freezeDir(tempDir string, freezer Freezer, dir *Dir) (BlockID, int64, error) {
+func freezeDir(tempDir string, freezer Freezer, dir *Dir) (*NewBlock, error) {
 	// fmt.Printf("freezeDir\n")
 	f, err := ioutil.TempFile(tempDir, "dir")
 	if err != nil {
-		return NABlock, 0, err
+		return nil, err
 	}
 
 	enc := gob.NewEncoder(f)
@@ -607,13 +612,8 @@ func freezeDir(tempDir string, freezer Freezer, dir *Dir) (BlockID, int64, error
 	}
 	f.Close()
 
-	st, err := os.Stat(f.Name())
-	if err != nil {
-		panic("This should be impossible. File disappeared before we could get its size")
-	}
-
-	BID, err := freezer.AddFile(f.Name())
-	return BID, st.Size(), err
+	newBlock, err := freezer.AddFile(f.Name())
+	return newBlock, err
 }
 
 func (ds *DataStore) Push(inode INode, name string) error {
@@ -652,6 +652,10 @@ func (ds *DataStore) Push(inode INode, name string) error {
 			return err
 		}
 		frozen.Release()
+	}
+
+	if rootBID == NABlock {
+		panic("Cannot set root to invalid block")
 	}
 
 	err = ds.remoteRefFactory.SetRoot(name, rootBID)
@@ -704,15 +708,15 @@ func collectUnpushed(db *INodeDB, tx RTx, inode INode, isPushed func(BlockID) (b
 	return nil
 }
 
-func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) (BlockID, error) {
+func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) (*NodeRepr, error) {
 	// fmt.Printf("freezing %d\n", inode)
 	node, err := getNodeRepr(tx, inode)
 	if err != nil {
-		return NABlock, err
+		return nil, err
 	}
 
 	if node.BID != NABlock {
-		return node.BID, nil
+		return node, nil
 	}
 
 	if node.IsDir {
@@ -720,7 +724,7 @@ func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) 
 		// if this is a directory, then we need to compute blocks for all child inodes
 		children, err := db.GetDirContents(tx, inode, false)
 		if err != nil {
-			return NABlock, err
+			return nil, err
 		}
 
 		// fmt.Printf("Node %d has %d children\n", inode, len(children))
@@ -729,14 +733,13 @@ func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) 
 			//child.ID
 			childNode, err := getNodeRepr(tx, child.ID)
 			if err != nil {
-				return NABlock, err
+				return nil, err
 			}
 
-			BID := childNode.BID
 			if childNode.BID == NABlock {
-				BID, err = freeze(tempDir, freezer, db, tx, child.ID)
+				childNode, err = freeze(tempDir, freezer, db, tx, child.ID)
 				if err != nil {
-					return NABlock, err
+					return nil, err
 				}
 			}
 
@@ -746,7 +749,7 @@ func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) 
 					IsDir:      childNode.IsDir,
 					Size:       childNode.Size,
 					ModTime:    childNode.ModTime,
-					BID:        BID,
+					BID:        childNode.BID,
 					URL:        childNode.URL,
 					ETag:       childNode.ETag,
 					Bucket:     childNode.Bucket,
@@ -754,19 +757,20 @@ func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) 
 					Generation: childNode.Generation})
 		}
 
-		BID, size, err := freezeDir(tempDir, freezer, &Dir{dirTable})
+		newBlock, err := freezeDir(tempDir, freezer, &Dir{dirTable})
 		if err != nil {
-			return NABlock, err
+			return nil, err
 		}
 
-		node.BID = BID
-		node.Size = size
+		node.BID = newBlock.BID
+		node.Size = newBlock.Size
+		node.ModTime = newBlock.ModTime
 		err = putNodeRepr(tx, inode, node)
 		if err != nil {
-			return NABlock, err
+			return nil, err
 		}
 
-		return BID, nil
+		return node, nil
 	}
 
 	if node.LocalWritablePath == "" {
@@ -774,20 +778,21 @@ func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) 
 	}
 	// fmt.Printf("inode %d is a writable file: %s\n", inode, node.LocalWritablePath)
 
-	BID, err := freezer.AddFile(node.LocalWritablePath)
-	err = putNodeRepr(tx, inode, node)
-	if err != nil {
-		return NABlock, err
-	}
+	newBlock, err := freezer.AddFile(node.LocalWritablePath)
 
-	node.BID = BID
+	node.BID = newBlock.BID
+	node.Size = newBlock.Size
+	node.ModTime = newBlock.ModTime
 	node.LocalWritablePath = ""
+	if node.BID == NABlock {
+		panic("Frozen block needs valid BlockID")
+	}
 	err = putNodeRepr(tx, inode, node)
 	if err != nil {
-		return NABlock, err
+		return nil, err
 	}
 
-	return BID, nil
+	return node, nil
 }
 
 func (d *DataStore) Freeze(inode INode) (BlockID, error) {
@@ -795,7 +800,9 @@ func (d *DataStore) Freeze(inode INode) (BlockID, error) {
 	var BID BlockID
 
 	err = d.db.update(func(tx RWTx) error {
-		BID, err = freeze(d.path, d.freezer, d.db, tx, inode)
+		var newNode *NodeRepr
+		newNode, err = freeze(d.path, d.freezer, d.db, tx, inode)
+		BID = newNode.BID
 		return nil
 	})
 

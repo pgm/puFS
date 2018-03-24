@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"time"
 )
 
 var ChunkStat []byte = []byte("ChunkStat")
@@ -148,10 +149,16 @@ func (f *FreezerImp) IsPushed(BID BlockID) (bool, error) {
 	return pushed, err
 }
 
-func (f *FreezerImp) AddFile(path string) (BlockID, error) {
+type NewBlock struct {
+	BID     BlockID
+	Size    int64
+	ModTime time.Time
+}
+
+func (f *FreezerImp) AddFile(path string) (*NewBlock, error) {
 	BID, err := computeHash(path)
 	if err != nil {
-		return NABlock, err
+		return nil, err
 	}
 
 	// find the path in the freezer for this block
@@ -159,15 +166,20 @@ func (f *FreezerImp) AddFile(path string) (BlockID, error) {
 	// and move this file there
 	err = os.Rename(path, destPath)
 	if err != nil {
-		return NABlock, err
+		return nil, err
+	}
+
+	st, err := os.Stat(destPath)
+	if err != nil {
+		panic("File disappeared after move or could not stat")
 	}
 
 	err = f.writeChunkStatus(BID, false)
 	if err != nil {
-		return NABlock, err
+		return nil, err
 	}
 
-	return BID, nil
+	return &NewBlock{BID: BID, Size: st.Size(), ModTime: st.ModTime()}, nil
 }
 
 func (f *FreezerImp) AddBlock(BID BlockID, remoteRef RemoteRef) error {
@@ -181,7 +193,7 @@ func (f *FreezerImp) AddBlock(BID BlockID, remoteRef RemoteRef) error {
 
 	filename := f.getPath(BID)
 
-	_, err = os.Stat(filename)
+	// st, err = os.Stat(filename)
 	// fmt.Printf("attempting to create %s (%s)\n", filename, err)
 	fi, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR|os.O_EXCL, 0600)
 	// fmt.Printf("err (%s)\n", err)

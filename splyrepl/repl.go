@@ -21,7 +21,7 @@ import (
 	"google.golang.org/api/option"
 )
 
-var GCSUrlExp *regexp.Regexp = regexp.MustCompile("^gs://([^/]+)/(.+)$")
+var GCSUrlExp *regexp.Regexp = regexp.MustCompile("^gs://([^/]+)/(.*)$")
 
 var ChdirStatement *regexp.Regexp = regexp.MustCompile("^cd ([^ ]+)$")
 var AddUrlStatement *regexp.Regexp = regexp.MustCompile("^addurl ([^ ]+) ([^ ]+)$")
@@ -130,11 +130,7 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 			if match != nil {
 				bucket := gcsmatch[1]
 				key := gcsmatch[2]
-				if strings.HasSuffix("/", key) {
-					err = errors.New("Unimplemented: trailing / used to specify key is a directory")
-				} else {
-					_, err = e.ds.AddRemoteGCS(parent, name, bucket, key)
-				}
+				_, err = e.ds.AddRemoteGCS(parent, name, bucket, key)
 			} else {
 				_, err = e.ds.AddRemoteURL(parent, name, url)
 			}

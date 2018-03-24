@@ -293,6 +293,9 @@ func assertValidDir(tx RTx, id INode) error {
 
 func (db *INodeDB) addBlockLazyChildren(tx RWTx, parent INode, children []DirEntry) error {
 	for _, child := range children {
+		if child.BID == NABlock && child.Bucket == "" && child.URL == "" {
+			panic("Child file missing BlockID")
+		}
 		newNodeID, err := db.getNextFreeInode(tx)
 		if err != nil {
 			return err
