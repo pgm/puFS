@@ -143,3 +143,72 @@ func TestDatastoreWithGCSRemote(t *testing.T) {
 	require.Nil(err)
 	require.Equal(6, len(children))
 }
+
+func newFullDataStore() *core.DataStore {
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx, option.WithServiceAccountFile("/Users/pmontgom/gcs-keys/gcs-test-b3b10d9077bb.json"))
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
+	}
+	bucketName := "gcs-test-1136"
+	f := NewRemoteRefFactory(client, bucketName, "blocks/")
+	dir, err := ioutil.TempDir("", "gcs_test")
+	if err != nil {
+		panic(err)
+	}
+
+	ds := core.NewDataStore(dir, f, core.NewMemStore([][]byte{core.ChunkStat}), core.NewMemStore([][]byte{core.ChildNodeBucket, core.NodeBucket}))
+	ds.SetClients(f, f)
+
+	return ds
+}
+
+func TestMount(t *testing.T) {
+	require := require.New(t)
+
+	ds1 := newFullDataStore()
+	ds2 := newFullDataStore()
+
+	folderID, err := ds1.MakeDir(core.RootINode, "folder")
+	require.Nil(err)
+
+	_, w, err := ds1.CreateWritable(folderID, "file")
+	require.Nil(err)
+
+	body := generateUniqueString()
+	_, err = w.Write([]byte(body))
+	require.Nil(err)
+	w.Release()
+
+	err = ds1.Push(core.RootINode, "test-mount")
+	require.Nil(err)
+
+	err = ds2.MountByLabel(core.RootINode, "test-mount")
+	require.Nil(err)
+
+	folderID2, err := ds2.GetNodeID(core.RootINode, "folder")
+	require.Nil(err)
+
+	fileID2, err := ds2.GetNodeID(folderID2, "file")
+	require.Nil(err)
+
+	r, err := ds2.GetReadRef(fileID2)
+	require.Nil(err)
+
+	buffer, err := ioutil.ReadAll(r)
+	require.Nil(err)
+
+	require.Equal(body, string(buffer))
+}
+
+func TestImportPublicData(t *testing.T) {
+	require := require.New(t)
+
+	ds := newFullDataStore()
+
+	inode, err := ds.AddRemoteGCS(core.RootINode, "gcs", "gcp-public-data-sentinel-2", "/")
+	require.Nil(err)
+
+	entries, err := ds.GetDirContents(inode)
+	require.True(len(entries) > 1)
+}

@@ -593,11 +593,11 @@ func (d *DataStore) CreateWritable(parent INode, name string) (INode, WritableRe
 	return inode, &WritableRefImp{filename, 0}, err
 }
 
-func freezeDir(tempDir string, freezer Freezer, dir *Dir) (BlockID, error) {
+func freezeDir(tempDir string, freezer Freezer, dir *Dir) (BlockID, int64, error) {
 	// fmt.Printf("freezeDir\n")
 	f, err := ioutil.TempFile(tempDir, "dir")
 	if err != nil {
-		return NABlock, err
+		return NABlock, 0, err
 	}
 
 	enc := gob.NewEncoder(f)
@@ -607,7 +607,13 @@ func freezeDir(tempDir string, freezer Freezer, dir *Dir) (BlockID, error) {
 	}
 	f.Close()
 
-	return freezer.AddFile(f.Name())
+	st, err := os.Stat(f.Name())
+	if err != nil {
+		panic("This should be impossible. File disappeared before we could get its size")
+	}
+
+	BID, err := freezer.AddFile(f.Name())
+	return BID, st.Size(), err
 }
 
 func (ds *DataStore) Push(inode INode, name string) error {
@@ -748,12 +754,13 @@ func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) 
 					Generation: childNode.Generation})
 		}
 
-		BID, err := freezeDir(tempDir, freezer, &Dir{dirTable})
+		BID, size, err := freezeDir(tempDir, freezer, &Dir{dirTable})
 		if err != nil {
 			return NABlock, err
 		}
 
 		node.BID = BID
+		node.Size = size
 		err = putNodeRepr(tx, inode, node)
 		if err != nil {
 			return NABlock, err

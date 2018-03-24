@@ -192,7 +192,8 @@ func (f *FreezerImp) AddBlock(BID BlockID, remoteRef RemoteRef) error {
 	defer fi.Close()
 
 	// fmt.Printf("Performing copy of 0-%d\n", remoteRef.GetSize())
-	err = remoteRef.Copy(0, remoteRef.GetSize(), fi)
+	// copy with size = -1 to copy entire contents
+	err = remoteRef.Copy(0, -1, fi)
 	// fmt.Printf("err from copy %s\n", err)
 	if err != nil {
 		return err

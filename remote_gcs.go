@@ -1,9 +1,11 @@
 package sply2
 
 import (
+	"encoding/base64"
 	"encoding/gob"
-	"errors"
+	"fmt"
 	"io"
+	"io/ioutil"
 	"strings"
 	"time"
 
@@ -42,13 +44,17 @@ func (r *RemoteGCS) Copy(offset int64, len int64, writer io.Writer) error {
 	}
 	defer reader.Close()
 
+	// TODO: more full implementation
+	if offset != 0 || len != -1 {
+		panic("needs fuller implementation. Assume copy should start at begining and copy entire file")
+	}
 	n, err := io.Copy(writer, reader)
 	if err != nil {
 		return err
 	}
 
-	if n != len {
-		return errors.New("Did not copy full requested length")
+	if len >= 0 && n != len {
+		return fmt.Errorf("Expected to copy to copy %d bytes but copied %d", len, n)
 	}
 
 	return nil
@@ -145,11 +151,13 @@ func (rrf *RemoteRefFactoryImp) SetRoot(name string, BID core.BlockID) error {
 	o := b.Object(rrf.RootKeyPrefix + name)
 	w := o.NewWriter(ctx)
 	defer w.Close()
-	enc := gob.NewEncoder(w)
-	err := enc.Encode(&BID)
+
+	BIDStr := base64.URLEncoding.EncodeToString(BID[:])
+	_, err := w.Write([]byte(BIDStr))
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
@@ -161,11 +169,17 @@ func (rrf *RemoteRefFactoryImp) GetRoot(name string) (core.BlockID, error) {
 	if err != nil {
 		return core.NABlock, err
 	}
-
 	defer r.Close()
-	dec := gob.NewDecoder(r)
+
+	buffer, err := ioutil.ReadAll(r)
+	if err != nil {
+		return core.NABlock, err
+	}
+
 	var BID core.BlockID
-	err = dec.Decode(&BID)
+	dbuffer := make([]byte, 1000)
+	n, err := base64.URLEncoding.Decode(dbuffer, buffer)
+	copy(BID[:], dbuffer[:n])
 	if err != nil {
 		return core.NABlock, err
 	}
@@ -173,6 +187,11 @@ func (rrf *RemoteRefFactoryImp) GetRoot(name string) (core.BlockID, error) {
 }
 
 func (rrf *RemoteRefFactoryImp) GetGCSAttr(bucket string, key string) (*core.GCSAttrs, error) {
+	if strings.HasSuffix(key, "/") || key == "" {
+		// should we do some sanity check. For the moment, assuming bucket/key is always good
+		return &core.GCSAttrs{IsDir: true}, nil
+	}
+
 	ctx := context.Background()
 	b := rrf.GCSClient.Bucket(bucket)
 	o := b.Object(key)
@@ -182,7 +201,7 @@ func (rrf *RemoteRefFactoryImp) GetGCSAttr(bucket string, key string) (*core.GCS
 		return nil, err
 	}
 
-	return &core.GCSAttrs{Generation: attrs.Generation, IsDir: strings.HasSuffix(key, "/"), ModTime: attrs.Updated, Size: attrs.Size}, nil
+	return &core.GCSAttrs{Generation: attrs.Generation, IsDir: false, ModTime: attrs.Updated, Size: attrs.Size}, nil
 }
 
 func (rrf *RemoteRefFactoryImp) Push(BID core.BlockID, rr io.Reader) error {
