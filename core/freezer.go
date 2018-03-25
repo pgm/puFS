@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -182,7 +183,7 @@ func (f *FreezerImp) AddFile(path string) (*NewBlock, error) {
 	return &NewBlock{BID: BID, Size: st.Size(), ModTime: st.ModTime()}, nil
 }
 
-func (f *FreezerImp) AddBlock(BID BlockID, remoteRef RemoteRef) error {
+func (f *FreezerImp) AddBlock(ctx context.Context, BID BlockID, remoteRef RemoteRef) error {
 	hasChunk, err := f.hasChunk(BID)
 	if err != nil {
 		return err
@@ -205,7 +206,7 @@ func (f *FreezerImp) AddBlock(BID BlockID, remoteRef RemoteRef) error {
 
 	// fmt.Printf("Performing copy of 0-%d\n", remoteRef.GetSize())
 	// copy with size = -1 to copy entire contents
-	err = remoteRef.Copy(0, -1, fi)
+	err = remoteRef.Copy(ctx, 0, -1, fi)
 	// fmt.Printf("err from copy %s\n", err)
 	if err != nil {
 		return err

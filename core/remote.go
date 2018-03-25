@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -22,12 +23,12 @@ type RemoteFile struct {
 }
 
 type RemoteRefFactory interface {
-	GetRef(node *NodeRepr) (RemoteRef, error)
-	Push(BID BlockID, rr io.Reader) error
-	SetLease(name string, expiry time.Time, BID BlockID) error
-	SetRoot(name string, BID BlockID) error
-	GetRoot(name string) (BlockID, error)
-	GetChildNodes(node *NodeRepr) ([]*RemoteFile, error)
+	GetRef(ctx context.Context, node *NodeRepr) (RemoteRef, error)
+	Push(ctx context.Context, BID BlockID, rr io.Reader) error
+	SetLease(ctx context.Context, name string, expiry time.Time, BID BlockID) error
+	SetRoot(ctx context.Context, name string, BID BlockID) error
+	GetRoot(ctx context.Context, name string) (BlockID, error)
+	GetChildNodes(ctx context.Context, node *NodeRepr) ([]*RemoteFile, error)
 }
 
 type RemoteRefFactoryMem struct {
@@ -45,7 +46,7 @@ func (m *MemCopy) GetSize() int64 {
 	return int64(len(m.buffer))
 }
 
-func (m *MemCopy) Copy(offset int64, len int64, writer io.Writer) error {
+func (m *MemCopy) Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error {
 	n, err := writer.Write(m.buffer[offset : offset+len])
 	if n != int(len) {
 		panic(fmt.Sprintf("%d != %d", n, len))
@@ -63,7 +64,7 @@ func NewRemoteRefFactoryMem() *RemoteRefFactoryMem {
 		leases:  make(map[string]BlockID)}
 }
 
-func (r *RemoteRefFactoryMem) GetRef(node *NodeRepr) (RemoteRef, error) {
+func (r *RemoteRefFactoryMem) GetRef(ctx context.Context, node *NodeRepr) (RemoteRef, error) {
 	key := GetBlockKey(r.prefix, node.BID)
 	b, ok := r.objects[key]
 	if !ok {
@@ -72,7 +73,7 @@ func (r *RemoteRefFactoryMem) GetRef(node *NodeRepr) (RemoteRef, error) {
 	return &MemCopy{b}, nil
 }
 
-func (r *RemoteRefFactoryMem) Push(BID BlockID, rr io.Reader) error {
+func (r *RemoteRefFactoryMem) Push(ctx context.Context, BID BlockID, rr io.Reader) error {
 	b, err := ioutil.ReadAll(rr)
 	if err != nil {
 		panic(err)
@@ -82,17 +83,17 @@ func (r *RemoteRefFactoryMem) Push(BID BlockID, rr io.Reader) error {
 	return nil
 }
 
-func (r *RemoteRefFactoryMem) SetLease(name string, expiry time.Time, BID BlockID) error {
+func (r *RemoteRefFactoryMem) SetLease(ctx context.Context, name string, expiry time.Time, BID BlockID) error {
 	r.leases[name] = BID
 	return nil
 }
 
-func (r *RemoteRefFactoryMem) SetRoot(name string, BID BlockID) error {
+func (r *RemoteRefFactoryMem) SetRoot(ctx context.Context, name string, BID BlockID) error {
 	r.roots[name] = BID
 	return nil
 }
 
-func (r *RemoteRefFactoryMem) GetRoot(name string) (BlockID, error) {
+func (r *RemoteRefFactoryMem) GetRoot(ctx context.Context, name string) (BlockID, error) {
 	BID, ok := r.roots[name]
 	if !ok {
 		return BID, UndefinedRootErr
@@ -100,7 +101,7 @@ func (r *RemoteRefFactoryMem) GetRoot(name string) (BlockID, error) {
 	return BID, nil
 }
 
-func (r *RemoteRefFactoryMem) GetChildNodes(node *NodeRepr) ([]*RemoteFile, error) {
+func (r *RemoteRefFactoryMem) GetChildNodes(ctx context.Context, node *NodeRepr) ([]*RemoteFile, error) {
 	prefix := node.Key + "/"
 	dirs := make(map[string]bool)
 	result := make([]*RemoteFile, 0, 100)

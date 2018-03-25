@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"io"
 	"strings"
 	"time"
@@ -11,7 +12,7 @@ type BlockID [32]byte
 
 type Freezer interface {
 	GetRef(BID BlockID) (FrozenRef, error)
-	AddBlock(BID BlockID, remoteRef RemoteRef) error
+	AddBlock(ctx context.Context, BID BlockID, remoteRef RemoteRef) error
 	AddFile(path string) (*NewBlock, error)
 	IsPushed(BID BlockID) (bool, error)
 }
@@ -23,7 +24,7 @@ type FrozenRef interface {
 
 type RemoteRef interface {
 	GetSize() int64
-	Copy(offset int64, len int64, writer io.Writer) error
+	Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error
 	// Release()
 }
 
@@ -183,7 +184,7 @@ type GCSAttrs struct {
 }
 
 type GCSClient interface {
-	GetGCSAttr(bucket string, key string) (*GCSAttrs, error)
+	GetGCSAttr(ctx context.Context, bucket string, key string) (*GCSAttrs, error)
 }
 
 type HTTPAttrs struct {
@@ -192,5 +193,5 @@ type HTTPAttrs struct {
 }
 
 type HTTPClient interface {
-	GetHTTPAttr(url string) (*HTTPAttrs, error)
+	GetHTTPAttr(ctx context.Context, url string) (*HTTPAttrs, error)
 }

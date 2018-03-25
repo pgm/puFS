@@ -38,7 +38,8 @@ func TestListChildren(t *testing.T) {
 	client := testClient()
 
 	f := NewRemoteRefFactory(client, BucketName, "test/")
-	files, err := f.GetChildNodes(&core.NodeRepr{Bucket: BucketName, Key: "test-data/"})
+	ctx := context.Background()
+	files, err := f.GetChildNodes(ctx, &core.NodeRepr{Bucket: BucketName, Key: "test-data/"})
 	require.Nil(err)
 
 	require.Equal(4, len(files))
@@ -69,7 +70,7 @@ func TestBlockPushPull(t *testing.T) {
 
 	BID := core.BlockID{1}
 	f := NewRemoteRefFactory(client, BucketName, "test/")
-	err := f.Push(BID, bytes.NewReader([]byte(body)))
+	err := f.Push(ctx, BID, bytes.NewReader([]byte(body)))
 
 	r, err := o.NewReader(ctx)
 	require.Nil(err)
@@ -80,9 +81,9 @@ func TestBlockPushPull(t *testing.T) {
 	require.Equal(body, string(buffer))
 
 	bb := bytes.NewBuffer(make([]byte, 0, 100))
-	ref, err := f.GetRef(&core.NodeRepr{BID: BID, Size: int64(len(body))})
+	ref, err := f.GetRef(ctx, &core.NodeRepr{BID: BID, Size: int64(len(body))})
 	require.Nil(err)
-	err = ref.Copy(0, int64(len(body)), bb)
+	err = ref.Copy(ctx, 0, int64(len(body)), bb)
 	require.Nil(err)
 	require.Equal(body, string(bb.Bytes()))
 }
@@ -128,8 +129,8 @@ func TestDatastoreWithGCSRemote(t *testing.T) {
 	ds := core.NewDataStore(dir, f, core.NewMemStore([][]byte{core.ChunkStat}), core.NewMemStore([][]byte{core.ChildNodeBucket, core.NodeBucket}))
 	ds.SetClients(f, f)
 
-	inode, err := ds.AddRemoteGCS(core.RootINode, "gcs", bucketName, "sample")
-	r, err := ds.GetReadRef(inode)
+	inode, err := ds.AddRemoteGCS(ctx, core.RootINode, "gcs", bucketName, "sample")
+	r, err := ds.GetReadRef(ctx, inode)
 	require.Nil(err)
 
 	b := make([]byte, 100)
@@ -138,8 +139,8 @@ func TestDatastoreWithGCSRemote(t *testing.T) {
 	require.Equal("hello", string(b[:n]))
 
 	// test child directories
-	inode, err = ds.AddRemoteGCS(core.RootINode, "gcs", bucketName, "test-data/")
-	children, err := ds.GetDirContents(inode)
+	inode, err = ds.AddRemoteGCS(ctx, core.RootINode, "gcs", bucketName, "test-data/")
+	children, err := ds.GetDirContents(ctx, inode)
 	require.Nil(err)
 	require.Equal(6, len(children))
 }
@@ -165,14 +166,15 @@ func newFullDataStore() *core.DataStore {
 
 func TestMount(t *testing.T) {
 	require := require.New(t)
+	ctx := context.Background()
 
 	ds1 := newFullDataStore()
 	ds2 := newFullDataStore()
 
-	folderID, err := ds1.MakeDir(core.RootINode, "folder")
+	folderID, err := ds1.MakeDir(ctx, core.RootINode, "folder")
 	require.Nil(err)
 
-	_, w, err := ds1.CreateWritable(folderID, "file")
+	_, w, err := ds1.CreateWritable(ctx, folderID, "file")
 	require.Nil(err)
 
 	body := generateUniqueString()
@@ -180,19 +182,19 @@ func TestMount(t *testing.T) {
 	require.Nil(err)
 	w.Release()
 
-	err = ds1.Push(core.RootINode, "test-mount")
+	err = ds1.Push(ctx, core.RootINode, "test-mount")
 	require.Nil(err)
 
-	err = ds2.MountByLabel(core.RootINode, "test-mount")
+	err = ds2.MountByLabel(ctx, core.RootINode, "test-mount")
 	require.Nil(err)
 
-	folderID2, err := ds2.GetNodeID(core.RootINode, "folder")
+	folderID2, err := ds2.GetNodeID(ctx, core.RootINode, "folder")
 	require.Nil(err)
 
-	fileID2, err := ds2.GetNodeID(folderID2, "file")
+	fileID2, err := ds2.GetNodeID(ctx, folderID2, "file")
 	require.Nil(err)
 
-	r, err := ds2.GetReadRef(fileID2)
+	r, err := ds2.GetReadRef(ctx, fileID2)
 	require.Nil(err)
 
 	buffer, err := ioutil.ReadAll(r)
@@ -205,10 +207,10 @@ func TestImportPublicData(t *testing.T) {
 	require := require.New(t)
 
 	ds := newFullDataStore()
-
-	inode, err := ds.AddRemoteGCS(core.RootINode, "gcs", "gcp-public-data-sentinel-2", "/")
+	ctx := context.Background()
+	inode, err := ds.AddRemoteGCS(ctx, core.RootINode, "gcs", "gcp-public-data-sentinel-2", "/")
 	require.Nil(err)
 
-	entries, err := ds.GetDirContents(inode)
+	entries, err := ds.GetDirContents(ctx, inode)
 	require.True(len(entries) > 1)
 }

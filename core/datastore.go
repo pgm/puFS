@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/gob"
@@ -105,18 +106,18 @@ func (d *DataStore) Close() {
 
 // Mount
 
-func (d *DataStore) MountByLabel(inode INode, label string) error {
+func (d *DataStore) MountByLabel(ctx context.Context, inode INode, label string) error {
 	err := validateName(label)
 	if err != nil {
 		return err
 	}
 
-	BID, err := d.remoteRefFactory.GetRoot(label)
+	BID, err := d.remoteRefFactory.GetRoot(ctx, label)
 	if err != nil {
 		return err
 	}
 
-	return d.Mount(inode, BID)
+	return d.Mount(ctx, inode, BID)
 }
 
 func genRandomString() string {
@@ -130,12 +131,12 @@ func genRandomString() string {
 }
 
 // need to call this periodically
-func (d *DataStore) renewLeases() error {
+func (d *DataStore) renewLeases(ctx context.Context) error {
 	now := time.Now()
 	staleThreshold := now.Add(-STALE_LEASE_DURATION)
 	for _, mount := range d.mounts {
 		if mount.lastLeaseRenewal.Before(staleThreshold) {
-			err := d.remoteRefFactory.SetLease(mount.leaseName, now.Add(DEFAULT_EXPIRY), mount.BID)
+			err := d.remoteRefFactory.SetLease(ctx, mount.leaseName, now.Add(DEFAULT_EXPIRY), mount.BID)
 			if err != nil {
 				return err
 			}
@@ -145,7 +146,7 @@ func (d *DataStore) renewLeases() error {
 	return nil
 }
 
-func (d *DataStore) Unmount(inode INode) error {
+func (d *DataStore) Unmount(ctx context.Context, inode INode) error {
 	var foundMount *Mount
 	newMounts := make([]*Mount, 0, len(d.mounts))
 
@@ -163,7 +164,7 @@ func (d *DataStore) Unmount(inode INode) error {
 	}
 
 	// record the lease is now expired
-	err := d.remoteRefFactory.SetLease(foundMount.leaseName, time.Now(), foundMount.BID)
+	err := d.remoteRefFactory.SetLease(ctx, foundMount.leaseName, time.Now(), foundMount.BID)
 	if err != nil {
 		return err
 	}
@@ -174,7 +175,7 @@ func (d *DataStore) Unmount(inode INode) error {
 	return nil
 }
 
-func (d *DataStore) Mount(inode INode, BID BlockID) error {
+func (d *DataStore) Mount(ctx context.Context, inode INode, BID BlockID) error {
 	if BID == NABlock {
 		panic("Cannot mount invalid block")
 	}
@@ -186,7 +187,7 @@ func (d *DataStore) Mount(inode INode, BID BlockID) error {
 	}
 
 	mount := &Mount{mountPoint: inode, leaseName: genRandomString(), lastLeaseRenewal: time.Now(), BID: BID}
-	err := d.remoteRefFactory.SetLease(mount.leaseName, time.Now().Add(DEFAULT_EXPIRY), BID)
+	err := d.remoteRefFactory.SetLease(ctx, mount.leaseName, time.Now().Add(DEFAULT_EXPIRY), BID)
 	if err != nil {
 		return err
 	}
@@ -224,7 +225,7 @@ func (d *DataStore) GetParent(inode INode) (INode, error) {
 	return node.ParentINode, nil
 }
 
-func (d *DataStore) GetNodeID(parent INode, name string) (INode, error) {
+func (d *DataStore) GetNodeID(ctx context.Context, parent INode, name string) (INode, error) {
 	var inode INode
 	var err error
 
@@ -242,7 +243,7 @@ func (d *DataStore) GetNodeID(parent INode, name string) (INode, error) {
 	}
 
 	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(tx, parent)
+		err = d.loadLazyChildren(ctx, tx, parent)
 		if err != nil {
 			return err
 		}
@@ -275,12 +276,12 @@ func (d *DataStore) GetNodeID(parent INode, name string) (INode, error) {
 // 	return names, nil
 // }
 
-func (d *DataStore) GetDirContents(id INode) ([]*DirEntry, error) {
+func (d *DataStore) GetDirContents(ctx context.Context, id INode) ([]*DirEntry, error) {
 	var err error
 	var entries []*DirEntry
 
 	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(tx, id)
+		err = d.loadLazyChildren(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -334,18 +335,18 @@ func (d *DataStore) GetDirContents(id INode) ([]*DirEntry, error) {
 	return entries, nil
 }
 
-func (d *DataStore) loadLazyChildren(tx RWTx, id INode) error {
+func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) error {
 	node, err := getNodeRepr(tx, id)
 	if err != nil {
 		return err
 	}
 	if node.IsDir && node.IsDeferredChildFetch {
 		if node.BID != NABlock {
-			remoteRef, err := d.remoteRefFactory.GetRef(node)
+			remoteRef, err := d.remoteRefFactory.GetRef(ctx, node)
 			if err != nil {
 				return err
 			}
-			err = d.freezer.AddBlock(node.BID, remoteRef)
+			err = d.freezer.AddBlock(ctx, node.BID, remoteRef)
 			if err != nil {
 				return err
 			}
@@ -369,7 +370,7 @@ func (d *DataStore) loadLazyChildren(tx RWTx, id INode) error {
 				return err
 			}
 		} else {
-			nodes, err := d.remoteRefFactory.GetChildNodes(node)
+			nodes, err := d.remoteRefFactory.GetChildNodes(ctx, node)
 			if err != nil {
 				return err
 			}
@@ -393,7 +394,7 @@ func (d *DataStore) loadLazyChildren(tx RWTx, id INode) error {
 	return nil
 }
 
-func (d *DataStore) AddRemoteGCS(parent INode, name string, bucket string, key string) (INode, error) {
+func (d *DataStore) AddRemoteGCS(ctx context.Context, parent INode, name string, bucket string, key string) (INode, error) {
 	var inode INode
 
 	err := validateName(name)
@@ -401,13 +402,13 @@ func (d *DataStore) AddRemoteGCS(parent INode, name string, bucket string, key s
 		return InvalidINode, err
 	}
 
-	attrs, err := d.gcsClient.GetGCSAttr(bucket, key)
+	attrs, err := d.gcsClient.GetGCSAttr(ctx, bucket, key)
 	if err != nil {
 		return InvalidINode, err
 	}
 
 	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(tx, parent)
+		err = d.loadLazyChildren(ctx, tx, parent)
 		if err != nil {
 			return err
 		}
@@ -427,7 +428,7 @@ func (d *DataStore) AddRemoteGCS(parent INode, name string, bucket string, key s
 	return inode, err
 }
 
-func (d *DataStore) MakeDir(parent INode, name string) (INode, error) {
+func (d *DataStore) MakeDir(ctx context.Context, parent INode, name string) (INode, error) {
 	// d.locker.RLock(parent)
 	// defer d.locker.RUnlock(parent)
 	err := validateName(name)
@@ -438,7 +439,7 @@ func (d *DataStore) MakeDir(parent INode, name string) (INode, error) {
 	var inode INode
 
 	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(tx, parent)
+		err = d.loadLazyChildren(ctx, tx, parent)
 		if err != nil {
 			return err
 		}
@@ -460,7 +461,7 @@ func (d *DataStore) PrintDebug() {
 	})
 }
 
-func (d *DataStore) Rename(srcParent INode, srcName string, dstParent INode, dstName string) error {
+func (d *DataStore) Rename(ctx context.Context, srcParent INode, srcName string, dstParent INode, dstName string) error {
 	err := validateName(srcName)
 	if err != nil {
 		return err
@@ -472,12 +473,12 @@ func (d *DataStore) Rename(srcParent INode, srcName string, dstParent INode, dst
 	}
 
 	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(tx, srcParent)
+		err = d.loadLazyChildren(ctx, tx, srcParent)
 		if err != nil {
 			return err
 		}
 
-		err = d.loadLazyChildren(tx, dstParent)
+		err = d.loadLazyChildren(ctx, tx, dstParent)
 		if err != nil {
 			return err
 		}
@@ -503,14 +504,14 @@ func (d *DataStore) Rename(srcParent INode, srcName string, dstParent INode, dst
 	return err
 }
 
-func (d *DataStore) Remove(parent INode, name string) error {
+func (d *DataStore) Remove(ctx context.Context, parent INode, name string) error {
 	err := validateName(name)
 	if err != nil {
 		return err
 	}
 
 	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(tx, parent)
+		err = d.loadLazyChildren(ctx, tx, parent)
 		if err != nil {
 			return err
 		}
@@ -525,7 +526,7 @@ func (d *DataStore) Remove(parent INode, name string) error {
 	return err
 }
 
-func (d *DataStore) AddRemoteURL(parent INode, name string, URL string) (INode, error) {
+func (d *DataStore) AddRemoteURL(ctx context.Context, parent INode, name string, URL string) (INode, error) {
 	var inode INode
 	var err error
 
@@ -534,7 +535,7 @@ func (d *DataStore) AddRemoteURL(parent INode, name string, URL string) (INode, 
 		return InvalidINode, err
 	}
 
-	attrs, err := d.httpClient.GetHTTPAttr(URL)
+	attrs, err := d.httpClient.GetHTTPAttr(ctx, URL)
 	if err != nil {
 		return InvalidINode, err
 	}
@@ -542,7 +543,7 @@ func (d *DataStore) AddRemoteURL(parent INode, name string, URL string) (INode, 
 	modTime := time.Now()
 
 	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(tx, parent)
+		err = d.loadLazyChildren(ctx, tx, parent)
 		if err != nil {
 			return err
 		}
@@ -562,7 +563,7 @@ func (d *DataStore) AddRemoteURL(parent INode, name string, URL string) (INode, 
 	return inode, err
 }
 
-func (d *DataStore) CreateWritable(parent INode, name string) (INode, WritableRef, error) {
+func (d *DataStore) CreateWritable(ctx context.Context, parent INode, name string) (INode, WritableRef, error) {
 	var inode INode
 	var filename string
 	var err error
@@ -573,7 +574,7 @@ func (d *DataStore) CreateWritable(parent INode, name string) (INode, WritableRe
 	}
 
 	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(tx, parent)
+		err = d.loadLazyChildren(ctx, tx, parent)
 		if err != nil {
 			return err
 		}
@@ -616,7 +617,7 @@ func freezeDir(tempDir string, freezer Freezer, dir *Dir) (*NewBlock, error) {
 	return newBlock, err
 }
 
-func (ds *DataStore) Push(inode INode, name string) error {
+func (ds *DataStore) Push(ctx context.Context, inode INode, name string) error {
 	err := validateName(name)
 	if err != nil {
 		return err
@@ -647,7 +648,7 @@ func (ds *DataStore) Push(inode INode, name string) error {
 			return err
 		}
 
-		err = ds.remoteRefFactory.Push(BID, frozen)
+		err = ds.remoteRefFactory.Push(ctx, BID, frozen)
 		if err != nil {
 			return err
 		}
@@ -658,7 +659,7 @@ func (ds *DataStore) Push(inode INode, name string) error {
 		panic("Cannot set root to invalid block")
 	}
 
-	err = ds.remoteRefFactory.SetRoot(name, rootBID)
+	err = ds.remoteRefFactory.SetRoot(ctx, name, rootBID)
 	if err != nil {
 		return err
 	}
@@ -667,7 +668,7 @@ func (ds *DataStore) Push(inode INode, name string) error {
 	for _, mount := range ds.mounts {
 		if mount.mountPoint == inode {
 			mount.BID = rootBID
-			err = ds.renewLeases()
+			err = ds.renewLeases(ctx)
 			if err != nil {
 				return err
 			}
@@ -813,7 +814,7 @@ func (d *DataStore) Freeze(inode INode) (BlockID, error) {
 	return BID, err
 }
 
-func (d *DataStore) GetReadRef(inode INode) (io.ReadSeeker, error) {
+func (d *DataStore) GetReadRef(ctx context.Context, inode INode) (io.ReadSeeker, error) {
 	var node *NodeRepr
 	var err error
 
@@ -842,7 +843,7 @@ func (d *DataStore) GetReadRef(inode INode) (io.ReadSeeker, error) {
 	// fmt.Printf("Got ref: %s %s\n", ref, err)
 	if ref == nil && err == nil {
 		// do we have a remote to pull
-		err := d.pullIntoFreezer(node)
+		err := d.pullIntoFreezer(ctx, node)
 		if err != nil {
 			return nil, err
 		}
@@ -857,14 +858,14 @@ func (d *DataStore) GetReadRef(inode INode) (io.ReadSeeker, error) {
 	return ref, nil
 }
 
-func (d *DataStore) pullIntoFreezer(node *NodeRepr) error {
+func (d *DataStore) pullIntoFreezer(ctx context.Context, node *NodeRepr) error {
 	// fmt.Printf("Pulling %s/%s\n", node.Bucket, node.Key)
-	remote, err := d.remoteRefFactory.GetRef(node)
+	remote, err := d.remoteRefFactory.GetRef(ctx, node)
 	if err != nil {
 		return err
 	}
 
-	return d.freezer.AddBlock(node.BID, remote)
+	return d.freezer.AddBlock(ctx, node.BID, remote)
 }
 
 func validateName(name string) error {

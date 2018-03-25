@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/pgm/sply2/core"
+	"golang.org/x/net/context"
 )
 
 type RemoteURL struct {
@@ -20,7 +21,7 @@ func (r *RemoteURL) GetSize() int64 {
 	return r.Length
 }
 
-func (r *RemoteURL) Copy(offset int64, len int64, writer io.Writer) error {
+func (r *RemoteURL) Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error {
 	req, err := http.NewRequest("GET", r.URL, nil)
 	req.Header.Add("If-Match", `"r.ETag"`)
 	if offset != 0 || len != r.Length {
@@ -51,7 +52,7 @@ func (r *RemoteURL) Copy(offset int64, len int64, writer io.Writer) error {
 	return nil
 }
 
-func (rrf *RemoteRefFactoryImp) GetHTTPAttr(url string) (*core.HTTPAttrs, error) {
+func (rrf *RemoteRefFactoryImp) GetHTTPAttr(ctx context.Context, url string) (*core.HTTPAttrs, error) {
 	res, err := http.Head(url)
 	if err != nil {
 		return nil, err

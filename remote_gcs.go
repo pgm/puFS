@@ -25,8 +25,7 @@ type RemoteGCS struct {
 	Size       int64
 }
 
-func (r *RemoteGCS) Copy(offset int64, len int64, writer io.Writer) error {
-	ctx := context.Background()
+func (r *RemoteGCS) Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error {
 	objHandle := r.Bucket.Object(r.Key)
 	if r.Generation != 0 {
 		objHandle = objHandle.If(storage.Conditions{GenerationMatch: r.Generation})
@@ -84,8 +83,7 @@ type RemoteRefFactoryImp struct {
 	GCSClient      *storage.Client
 }
 
-func (rrf *RemoteRefFactoryImp) GetChildNodes(node *core.NodeRepr) ([]*core.RemoteFile, error) {
-	ctx := context.Background()
+func (rrf *RemoteRefFactoryImp) GetChildNodes(ctx context.Context, node *core.NodeRepr) ([]*core.RemoteFile, error) {
 	b := rrf.GCSClient.Bucket(node.Bucket)
 	it := b.Objects(ctx, &storage.Query{Delimiter: "/", Prefix: node.Key, Versions: false})
 	result := make([]*core.RemoteFile, 0, 100)
@@ -131,8 +129,7 @@ type Lease struct {
 	BID    core.BlockID
 }
 
-func (rrf *RemoteRefFactoryImp) SetLease(name string, expiry time.Time, BID core.BlockID) error {
-	ctx := context.Background()
+func (rrf *RemoteRefFactoryImp) SetLease(ctx context.Context, name string, expiry time.Time, BID core.BlockID) error {
 	b := rrf.GCSClient.Bucket(rrf.Bucket)
 	o := b.Object(rrf.LeaseKeyPrefix + name)
 	w := o.NewWriter(ctx)
@@ -145,8 +142,7 @@ func (rrf *RemoteRefFactoryImp) SetLease(name string, expiry time.Time, BID core
 	return nil
 }
 
-func (rrf *RemoteRefFactoryImp) SetRoot(name string, BID core.BlockID) error {
-	ctx := context.Background()
+func (rrf *RemoteRefFactoryImp) SetRoot(ctx context.Context, name string, BID core.BlockID) error {
 	b := rrf.GCSClient.Bucket(rrf.Bucket)
 	o := b.Object(rrf.RootKeyPrefix + name)
 	w := o.NewWriter(ctx)
@@ -161,8 +157,7 @@ func (rrf *RemoteRefFactoryImp) SetRoot(name string, BID core.BlockID) error {
 	return nil
 }
 
-func (rrf *RemoteRefFactoryImp) GetRoot(name string) (core.BlockID, error) {
-	ctx := context.Background()
+func (rrf *RemoteRefFactoryImp) GetRoot(ctx context.Context, name string) (core.BlockID, error) {
 	b := rrf.GCSClient.Bucket(rrf.Bucket)
 	o := b.Object(rrf.RootKeyPrefix + name)
 	r, err := o.NewReader(ctx)
@@ -186,13 +181,12 @@ func (rrf *RemoteRefFactoryImp) GetRoot(name string) (core.BlockID, error) {
 	return BID, nil
 }
 
-func (rrf *RemoteRefFactoryImp) GetGCSAttr(bucket string, key string) (*core.GCSAttrs, error) {
+func (rrf *RemoteRefFactoryImp) GetGCSAttr(ctx context.Context, bucket string, key string) (*core.GCSAttrs, error) {
 	if strings.HasSuffix(key, "/") || key == "" {
 		// should we do some sanity check. For the moment, assuming bucket/key is always good
 		return &core.GCSAttrs{IsDir: true}, nil
 	}
 
-	ctx := context.Background()
 	b := rrf.GCSClient.Bucket(bucket)
 	o := b.Object(key)
 	attrs, err := o.Attrs(ctx)
@@ -204,8 +198,7 @@ func (rrf *RemoteRefFactoryImp) GetGCSAttr(bucket string, key string) (*core.GCS
 	return &core.GCSAttrs{Generation: attrs.Generation, IsDir: false, ModTime: attrs.Updated, Size: attrs.Size}, nil
 }
 
-func (rrf *RemoteRefFactoryImp) Push(BID core.BlockID, rr io.Reader) error {
-	ctx := context.Background()
+func (rrf *RemoteRefFactoryImp) Push(ctx context.Context, BID core.BlockID, rr io.Reader) error {
 	// upload only if generation == 0, which means this upload will fail if any object exists with the key
 	// TODO: need to add a check for that case
 	key := core.GetBlockKey(rrf.CASKeyPrefix, BID)
@@ -234,7 +227,7 @@ func NewRemoteRefFactory(client *storage.Client, Bucket string, KeyPrefix string
 		LeaseKeyPrefix: KeyPrefix + "lease/"}
 }
 
-func (rrf *RemoteRefFactoryImp) GetRef(node *core.NodeRepr) (core.RemoteRef, error) {
+func (rrf *RemoteRefFactoryImp) GetRef(ctx context.Context, node *core.NodeRepr) (core.RemoteRef, error) {
 	var remote core.RemoteRef
 
 	if node.URL != "" {

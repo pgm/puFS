@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -38,12 +39,12 @@ type Execution struct {
 	errorCount int
 }
 
-func (e *Execution) splitPath(path string) (INode, string, error) {
+func (e *Execution) splitPath(ctx context.Context, path string) (INode, string, error) {
 	var err error
 	components := strings.Split(path, "/")
 	parent := INode(RootINode)
 	for _, c := range components[0 : len(components)-1] {
-		parent, err = e.ds.GetNodeID(parent, c)
+		parent, err = e.ds.GetNodeID(ctx, parent, c)
 		if err != nil {
 			return InvalidINode, "", err
 		}
@@ -51,74 +52,74 @@ func (e *Execution) splitPath(path string) (INode, string, error) {
 	return parent, components[len(components)-1], nil
 }
 
-func (e *Execution) getINode(path string) (INode, error) {
-	parent, name, err := e.splitPath(path)
+func (e *Execution) getINode(ctx context.Context, path string) (INode, error) {
+	parent, name, err := e.splitPath(ctx, path)
 	if err != nil {
 		return InvalidINode, err
 	}
-	inode, err := e.ds.GetNodeID(parent, name)
+	inode, err := e.ds.GetNodeID(ctx, parent, name)
 	if err != nil {
 		return InvalidINode, err
 	}
 	return inode, nil
 }
 
-func (e *Execution) executeStatement(statementType *regexp.Regexp, match []string) {
+func (e *Execution) executeStatement(ctx context.Context, statementType *regexp.Regexp, match []string) {
 	var err error
 
 	if statementType == MkdirStatement {
-		parent, name, err := e.splitPath(match[1])
+		parent, name, err := e.splitPath(ctx, match[1])
 		if err == nil {
-			_, err = e.ds.MakeDir(parent, name)
+			_, err = e.ds.MakeDir(ctx, parent, name)
 		}
 	} else if statementType == UnlinkStatement {
-		parent, name, err := e.splitPath(match[1])
+		parent, name, err := e.splitPath(ctx, match[1])
 		if err == nil {
-			err = e.ds.Remove(parent, name)
+			err = e.ds.Remove(ctx, parent, name)
 		}
 	} else if statementType == WriteStatement {
-		parent, name, err := e.splitPath(match[1])
+		parent, name, err := e.splitPath(ctx, match[1])
 		if err == nil {
-			_, _, err = e.ds.CreateWritable(parent, name)
+			_, _, err = e.ds.CreateWritable(ctx, parent, name)
 		}
 	} else if statementType == ReadStatement {
-		inode, err := e.getINode(match[1])
+		inode, err := e.getINode(ctx, match[1])
 		if err == nil {
-			_, err = e.ds.GetReadRef(inode)
+			_, err = e.ds.GetReadRef(ctx, inode)
 		}
 	} else if statementType == ListStatement {
-		inode, err := e.getINode(match[1])
+		inode, err := e.getINode(ctx, match[1])
 		if err == nil {
-			_, err = e.ds.GetDirContents(inode)
+			_, err = e.ds.GetDirContents(ctx, inode)
 		}
 	} else if statementType == FreezeStatement {
-		inode, err := e.getINode(match[1])
+		inode, err := e.getINode(ctx, match[1])
 		if err == nil {
 			_, err = e.ds.Freeze(inode)
 		}
 	} else if statementType == PushStatement {
-		inode, err := e.getINode(match[1])
+		inode, err := e.getINode(ctx, match[1])
 		if err == nil {
-			err = e.ds.Push(inode, match[2])
+			err = e.ds.Push(ctx, inode, match[2])
 		}
 	} else if statementType == MountStatement {
-		inode, err := e.getINode(match[1])
+		inode, err := e.getINode(ctx, match[1])
 		if err == nil {
-			err = e.ds.MountByLabel(inode, match[2])
+			err = e.ds.MountByLabel(ctx, inode, match[2])
 		}
 	} else if statementType == UnmountStatement {
-		inode, err := e.getINode(match[1])
+		inode, err := e.getINode(ctx, match[1])
 		if err == nil {
-			err = e.ds.Unmount(inode)
+			err = e.ds.Unmount(ctx, inode)
 		}
 	} else if statementType == SwapStatement {
 		e.ds, e.ds2 = e.ds2, e.ds
 	} else if statementType == RenameStatement {
-		srcParent, srcName, err := e.splitPath(match[1])
+		srcParent, srcName, err := e.splitPath(ctx, match[1])
 		if err == nil {
-			dstParent, dstName, err := e.splitPath(match[2])
+			dstParent, dstName, err := e.splitPath(ctx, match[2])
 			if err == nil {
-				err = e.ds.Rename(srcParent, srcName, dstParent, dstName)
+				err = e.ds.Rename(ctx, srcParent, srcName, dstParent, dstName)
 			}
 		}
 	} else if statementType == BlankStatement {
@@ -142,6 +143,7 @@ func executeScript(script string) (*Execution, error) {
 	f := NewRemoteRefFactoryMem()
 	e.ds = NewDataStore(dir, f, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
 	e.ds2 = NewDataStore(dir, f, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	ctx := context.Background()
 
 	lines := strings.Split(script, "\n")
 	for _, line := range lines {
@@ -149,7 +151,7 @@ func executeScript(script string) (*Execution, error) {
 		for _, exp := range StatementExps {
 			match := exp.FindStringSubmatch(line)
 			if match != nil {
-				e.executeStatement(exp, match)
+				e.executeStatement(ctx, exp, match)
 				handledLine = true
 			}
 		}

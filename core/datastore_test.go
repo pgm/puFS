@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"testing"
@@ -9,7 +10,9 @@ import (
 )
 
 func createFile(require *require.Assertions, d *DataStore, parent INode, name string, content string) INode {
-	aID, w, err := d.CreateWritable(parent, name)
+	ctx := context.Background()
+
+	aID, w, err := d.CreateWritable(ctx, parent, name)
 	// d.db.db.View(func(tx RTx) error {
 	// 	fmt.Println("Right after CreateWrtiable")
 	// 	printDbStats(tx)
@@ -35,6 +38,7 @@ func testDataStore() *DataStore {
 }
 
 func TestPersistence(t *testing.T) {
+	ctx := context.Background()
 	require := require.New(t)
 
 	dir, err := ioutil.TempDir("", "test")
@@ -49,7 +53,7 @@ func TestPersistence(t *testing.T) {
 
 	ds2 := NewDataStore(dir, nil, freezerStore, nodeStore)
 
-	r, err := ds2.GetReadRef(aID)
+	r, err := ds2.GetReadRef(ctx, aID)
 	require.Nil(err)
 
 	buffer := make([]byte, 4)
@@ -61,30 +65,30 @@ func TestPersistence(t *testing.T) {
 
 func TestRename(t *testing.T) {
 	require := require.New(t)
-
+	ctx := context.Background()
 	d := testDataStore()
 
 	createFile(require, d, RootINode, "a", "data")
 	d.PrintDebug()
 	fmt.Println("-----")
-	err := d.Rename(RootINode, "a", RootINode, "b")
+	err := d.Rename(ctx, RootINode, "a", RootINode, "b")
 	require.Nil(err)
 	d.PrintDebug()
 
-	_, err = d.GetNodeID(RootINode, "a")
+	_, err = d.GetNodeID(ctx, RootINode, "a")
 	require.Equal(NoSuchNodeErr, err)
-	_, err = d.GetNodeID(RootINode, "b")
+	_, err = d.GetNodeID(ctx, RootINode, "b")
 	require.Nil(err)
 }
 
 func TestWriteRead(t *testing.T) {
 	require := require.New(t)
-
+	ctx := context.Background()
 	d := testDataStore()
 
 	aID := createFile(require, d, RootINode, "a", "data")
 
-	r, err := d.GetReadRef(aID)
+	r, err := d.GetReadRef(ctx, aID)
 	require.Nil(err)
 
 	buffer := make([]byte, 4)
@@ -96,6 +100,7 @@ func TestWriteRead(t *testing.T) {
 
 func TestFreezeFile(t *testing.T) {
 	require := require.New(t)
+	ctx := context.Background()
 
 	d := testDataStore()
 
@@ -104,7 +109,7 @@ func TestFreezeFile(t *testing.T) {
 	BID, err := d.Freeze(aID)
 	require.Nil(err)
 
-	r, err := d.GetReadRef(aID)
+	r, err := d.GetReadRef(ctx, aID)
 	require.Nil(err)
 
 	buffer := make([]byte, 4)
@@ -122,10 +127,11 @@ func TestFreezeFile(t *testing.T) {
 
 func TestFreezeDir(t *testing.T) {
 	require := require.New(t)
+	ctx := context.Background()
 
 	d := testDataStore()
 
-	aID, err := d.MakeDir(RootINode, "a")
+	aID, err := d.MakeDir(ctx, RootINode, "a")
 	require.Nil(err)
 
 	aBID1, err := d.Freeze(aID)
@@ -137,7 +143,7 @@ func TestFreezeDir(t *testing.T) {
 	require.Equal(aBID1, aBID2)
 
 	// now mutate a, which should clear the blockID
-	_, err = d.MakeDir(aID, "b")
+	_, err = d.MakeDir(ctx, aID, "b")
 	require.Nil(err)
 
 	// and freezing should yield a different id
@@ -149,9 +155,10 @@ func TestFreezeDir(t *testing.T) {
 func TestRootDirListing(t *testing.T) {
 	require := require.New(t)
 	d := testDataStore()
+	ctx := context.Background()
 
 	createFile(require, d, RootINode, "a", "data")
-	names, err := d.GetDirContents(RootINode)
+	names, err := d.GetDirContents(ctx, RootINode)
 	require.Nil(err)
 	require.Equal(1, len(names))
 	require.Equal("a", names[0])
@@ -160,18 +167,19 @@ func TestRootDirListing(t *testing.T) {
 func TestSubDirListing(t *testing.T) {
 	require := require.New(t)
 	d := testDataStore()
+	ctx := context.Background()
 
-	aID, err := d.MakeDir(RootINode, "a")
+	aID, err := d.MakeDir(ctx, RootINode, "a")
 	require.Nil(err)
 
 	createFile(require, d, aID, "b", "data")
 
-	names, err := d.GetDirContents(RootINode)
+	names, err := d.GetDirContents(ctx, RootINode)
 	require.Nil(err)
 	require.Equal(1, len(names))
 	require.Equal("a", names[0])
 
-	names, err = d.GetDirContents(aID)
+	names, err = d.GetDirContents(ctx, aID)
 	require.Nil(err)
 	require.Equal(1, len(names))
 	require.Equal("b", names[0])
@@ -194,20 +202,21 @@ func TestSubDirListing(t *testing.T) {
 func TestRmdir(t *testing.T) {
 	require := require.New(t)
 	d := testDataStore()
+	ctx := context.Background()
 
-	aID, err := d.MakeDir(RootINode, "a")
+	aID, err := d.MakeDir(ctx, RootINode, "a")
 	require.Nil(err)
 
-	_, err = d.MakeDir(aID, "b")
+	_, err = d.MakeDir(ctx, aID, "b")
 	require.Nil(err)
 
-	err = d.Remove(RootINode, "a")
+	err = d.Remove(ctx, RootINode, "a")
 	require.Equal(DirNotEmptyErr, err)
 
-	err = d.Remove(aID, "b")
+	err = d.Remove(ctx, aID, "b")
 	require.Nil(err)
 
-	err = d.Remove(RootINode, "a")
+	err = d.Remove(ctx, RootINode, "a")
 	require.Nil(err)
 }
 
@@ -230,11 +239,12 @@ func TestRemote(t *testing.T) {
 	fmt.Printf("err\n")
 	require := require.New(t)
 	d := testDataStore()
+	ctx := context.Background()
 
-	fileID, err := d.AddRemoteURL(RootINode, "remote", url)
+	fileID, err := d.AddRemoteURL(ctx, RootINode, "remote", url)
 	require.Nil(err)
 
-	r, err := d.GetReadRef(fileID)
+	r, err := d.GetReadRef(ctx, fileID)
 	require.Nil(err)
 
 	buffer := make([]byte, 500)
