@@ -54,7 +54,7 @@ type Execution struct {
 	cwd string
 }
 
-func (e *Execution) splitPath(relPath string) (core.INode, string, error) {
+func (e *Execution) splitPath(ctx context.Context, relPath string) (core.INode, string, error) {
 	var err error
 	fullPath := path.Join(e.cwd, relPath)
 	if fullPath[0] != '/' {
@@ -68,7 +68,7 @@ func (e *Execution) splitPath(relPath string) (core.INode, string, error) {
 	components := strings.Split(fullPath[1:], "/")
 	parent := core.INode(core.RootINode)
 	for _, c := range components[0 : len(components)-1] {
-		parent, err = e.ds.GetNodeID(parent, c)
+		parent, err = e.ds.GetNodeID(ctx, parent, c)
 		if err != nil {
 			return core.InvalidINode, "", err
 		}
@@ -76,12 +76,12 @@ func (e *Execution) splitPath(relPath string) (core.INode, string, error) {
 	return parent, components[len(components)-1], nil
 }
 
-func (e *Execution) getINode(relPath string) (core.INode, error) {
-	parent, name, err := e.splitPath(relPath)
+func (e *Execution) getINode(ctx context.Context, relPath string) (core.INode, error) {
+	parent, name, err := e.splitPath(ctx, relPath)
 	if err != nil {
 		return core.InvalidINode, err
 	}
-	inode, err := e.ds.GetNodeID(parent, name)
+	inode, err := e.ds.GetNodeID(ctx, parent, name)
 	if err != nil {
 		return core.InvalidINode, err
 	}
@@ -95,34 +95,35 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 	var inode core.INode
 
 	start := time.Now()
+	ctx := context.Background()
 
 	if statementType == ChdirStatement {
-		_, err = e.getINode(match[1])
+		_, err = e.getINode(ctx, match[1])
 		if err == nil {
 			e.cwd = path.Join(e.cwd, match[1])
 		}
 	} else if statementType == MkdirStatement {
-		parent, name, err = e.splitPath(match[1])
+		parent, name, err = e.splitPath(ctx, match[1])
 		if err == nil {
-			_, err = e.ds.MakeDir(parent, name)
+			_, err = e.ds.MakeDir(ctx, parent, name)
 		}
 	} else if statementType == UnlinkStatement {
-		parent, name, err = e.splitPath(match[1])
+		parent, name, err = e.splitPath(ctx, match[1])
 		if err == nil {
-			err = e.ds.Remove(parent, name)
+			err = e.ds.Remove(ctx, parent, name)
 		}
 	} else if statementType == WriteStatement {
-		parent, name, err = e.splitPath(match[1])
+		parent, name, err = e.splitPath(ctx, match[1])
 		if err == nil {
 			var w core.WritableRef
-			_, w, err = e.ds.CreateWritable(parent, name)
+			_, w, err = e.ds.CreateWritable(ctx, parent, name)
 			if err == nil {
 				_, err = w.Write([]byte("hello"))
 				w.Release()
 			}
 		}
 	} else if statementType == AddUrlStatement {
-		parent, name, err = e.splitPath(match[2])
+		parent, name, err = e.splitPath(ctx, match[2])
 
 		if err == nil {
 			url := match[1]
@@ -130,16 +131,16 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 			if match != nil {
 				bucket := gcsmatch[1]
 				key := gcsmatch[2]
-				_, err = e.ds.AddRemoteGCS(parent, name, bucket, key)
+				_, err = e.ds.AddRemoteGCS(ctx, parent, name, bucket, key)
 			} else {
-				_, err = e.ds.AddRemoteURL(parent, name, url)
+				_, err = e.ds.AddRemoteURL(ctx, parent, name, url)
 			}
 		}
 	} else if statementType == ReadStatement {
-		inode, err = e.getINode(match[1])
+		inode, err = e.getINode(ctx, match[1])
 		if err == nil {
 			var r io.Reader
-			r, err = e.ds.GetReadRef(inode)
+			r, err = e.ds.GetReadRef(ctx, inode)
 			if err == nil {
 				b, err := ioutil.ReadAll(r)
 				if err == nil {
@@ -148,10 +149,10 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 			}
 		}
 	} else if statementType == ListStatement {
-		inode, err = e.getINode(match[1])
+		inode, err = e.getINode(ctx, match[1])
 		if err == nil {
-			var files []*core.DirEntry
-			files, err = e.ds.GetDirContents(inode)
+			var files []*core.DirEntryWithID
+			files, err = e.ds.GetDirContents(ctx, inode)
 			for _, e := range files {
 				fileType := "f"
 				if e.IsDir {
@@ -167,33 +168,33 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 			}
 		}
 	} else if statementType == FreezeStatement {
-		inode, err = e.getINode(match[1])
+		inode, err = e.getINode(ctx, match[1])
 		if err == nil {
 			_, err = e.ds.Freeze(inode)
 		}
 	} else if statementType == PushStatement {
-		inode, err = e.getINode(match[1])
+		inode, err = e.getINode(ctx, match[1])
 		if err == nil {
-			err = e.ds.Push(inode, match[2])
+			err = e.ds.Push(ctx, inode, match[2])
 		}
 	} else if statementType == MountStatement {
-		inode, err = e.getINode(match[1])
+		inode, err = e.getINode(ctx, match[1])
 		if err == nil {
-			err = e.ds.MountByLabel(inode, match[2])
+			err = e.ds.MountByLabel(ctx, inode, match[2])
 		}
 	} else if statementType == UnmountStatement {
-		inode, err = e.getINode(match[1])
+		inode, err = e.getINode(ctx, match[1])
 		if err == nil {
-			err = e.ds.Unmount(inode)
+			err = e.ds.Unmount(ctx, inode)
 		}
 	} else if statementType == RenameStatement {
 		var srcParent, dstParent core.INode
 		var srcName, dstName string
-		srcParent, srcName, err = e.splitPath(match[1])
+		srcParent, srcName, err = e.splitPath(ctx, match[1])
 		if err == nil {
-			dstParent, dstName, err = e.splitPath(match[2])
+			dstParent, dstName, err = e.splitPath(ctx, match[2])
 			if err == nil {
-				err = e.ds.Rename(srcParent, srcName, dstParent, dstName)
+				err = e.ds.Rename(ctx, srcParent, srcName, dstParent, dstName)
 			}
 		}
 	} else if statementType == BlankStatement {

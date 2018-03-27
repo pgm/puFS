@@ -16,7 +16,7 @@ import (
 )
 
 var NABlock BlockID = BlockID{}
-var ValidNameRegExp *regexp.Regexp = regexp.MustCompile("[A-Za-z0-9.~#$@ ()+_-]+")
+var ValidNameRegExp *regexp.Regexp = regexp.MustCompile("^[A-Za-z0-9.~#$@ ()+_.-]+$")
 
 type Mount struct {
 	mountPoint       INode
@@ -276,9 +276,9 @@ func (d *DataStore) GetNodeID(ctx context.Context, parent INode, name string) (I
 // 	return names, nil
 // }
 
-func (d *DataStore) GetDirContents(ctx context.Context, id INode) ([]*DirEntry, error) {
+func (d *DataStore) GetDirContents(ctx context.Context, id INode) ([]*DirEntryWithID, error) {
 	var err error
-	var entries []*DirEntry
+	var entries []*DirEntryWithID
 
 	err = d.db.update(func(tx RWTx) error {
 		err = d.loadLazyChildren(ctx, tx, id)
@@ -292,7 +292,7 @@ func (d *DataStore) GetDirContents(ctx context.Context, id INode) ([]*DirEntry, 
 			return err
 		}
 
-		entries = make([]*DirEntry, 0, len(names))
+		entries = make([]*DirEntryWithID, 0, len(names))
 		for _, n := range names {
 			var node *NodeRepr
 			node, err = getNodeRepr(tx, n.ID)
@@ -310,19 +310,22 @@ func (d *DataStore) GetDirContents(ctx context.Context, id INode) ([]*DirEntry, 
 				mtime = fi.ModTime()
 			}
 
-			entries = append(entries, &DirEntry{Name: n.Name,
-				IsDir:   node.IsDir,
-				Size:    size,
-				ModTime: mtime,
+			entry := &DirEntryWithID{ID: n.ID,
+				DirEntry: DirEntry{
+					Name:    n.Name,
+					IsDir:   node.IsDir,
+					Size:    size,
+					ModTime: mtime,
 
-				BID: node.BID,
+					BID: node.BID,
 
-				URL:  node.URL,
-				ETag: node.ETag,
+					URL:  node.URL,
+					ETag: node.ETag,
 
-				Bucket:     node.Bucket,
-				Key:        node.Key,
-				Generation: node.Generation})
+					Bucket:     node.Bucket,
+					Key:        node.Key,
+					Generation: node.Generation}}
+			entries = append(entries, entry)
 		}
 
 		return nil
@@ -873,4 +876,16 @@ func validateName(name string) error {
 		return nil
 	}
 	return InvalidCharFilenameErr
+}
+
+func (d *DataStore) GetAttr(ctx context.Context, inode INode) (*NodeRepr, error) {
+	var node *NodeRepr
+	var err error
+
+	err = d.db.view(func(tx RTx) error {
+		node, err = getNodeRepr(tx, inode)
+		return err
+	})
+
+	return node, err
 }

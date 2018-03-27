@@ -50,6 +50,11 @@ type DirEntry struct {
 	Generation int64
 }
 
+type DirEntryWithID struct {
+	DirEntry
+	ID INode
+}
+
 type Dir struct {
 	Entries []DirEntry
 }
