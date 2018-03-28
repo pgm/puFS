@@ -10,3 +10,9 @@ examples/old-crashers
 splyrepl/x
 splyrepl/repl
 splyrepl/splyrepl.history
+*.db
+chunks
+*.gob
+
+
+.DS_Store
