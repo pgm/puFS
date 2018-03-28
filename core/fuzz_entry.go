@@ -3,9 +3,6 @@ package core
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io/ioutil"
-	"os"
 	"regexp"
 	"strings"
 )
@@ -134,33 +131,34 @@ func (e *Execution) executeStatement(ctx context.Context, statementType *regexp.
 }
 
 func executeScript(script string) (*Execution, error) {
-	dir, err := ioutil.TempDir("", "gofuzz")
-	if err != nil {
-		panic(err)
-	}
-	defer os.RemoveAll(dir)
-	e := &Execution{}
-	f := NewRemoteRefFactoryMem()
-	e.ds = NewDataStore(dir, f, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
-	e.ds2 = NewDataStore(dir, f, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
-	ctx := context.Background()
+	panic("unimp")
+	// dir, err := ioutil.TempDir("", "gofuzz")
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// defer os.RemoveAll(dir)
+	// e := &Execution{}
+	// f := NewRemoteRefFactoryMem()
+	// e.ds = NewDataStore(dir, f, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	// e.ds2 = NewDataStore(dir, f, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	// ctx := context.Background()
 
-	lines := strings.Split(script, "\n")
-	for _, line := range lines {
-		handledLine := false
-		for _, exp := range StatementExps {
-			match := exp.FindStringSubmatch(line)
-			if match != nil {
-				e.executeStatement(ctx, exp, match)
-				handledLine = true
-			}
-		}
-		if !handledLine {
-			return nil, fmt.Errorf("Could not parse \"%s\"", line)
-		}
-	}
+	// lines := strings.Split(script, "\n")
+	// for _, line := range lines {
+	// 	handledLine := false
+	// 	for _, exp := range StatementExps {
+	// 		match := exp.FindStringSubmatch(line)
+	// 		if match != nil {
+	// 			e.executeStatement(ctx, exp, match)
+	// 			handledLine = true
+	// 		}
+	// 	}
+	// 	if !handledLine {
+	// 		return nil, fmt.Errorf("Could not parse \"%s\"", line)
+	// 	}
+	// }
 
-	return e, nil
+	// return e, nil
 }
 
 func Fuzz(data []byte) int {

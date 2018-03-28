@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/gob"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -77,11 +76,12 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory, freezer
 		}
 	}
 
+	chunkSize := 100 * 1024
 	return &DataStore{path: storagePath,
 		mountTablePath:   mountTablePath,
 		db:               NewINodeDB(1000, nodeKV),
 		writableStore:    NewWritableStore(writablePath),
-		freezer:          NewFreezer(freezerPath, freezerKV),
+		freezer:          NewFreezer(freezerPath, freezerKV, chunkSize),
 		remoteRefFactory: remoteRefFactory}
 }
 
@@ -338,6 +338,20 @@ func (d *DataStore) GetDirContents(ctx context.Context, id INode) ([]*DirEntryWi
 	return entries, nil
 }
 
+type refReader struct {
+	ctx context.Context
+	fr  FrozenRef
+}
+
+func (r *refReader) Read(p []byte) (n int, err error) {
+	return r.fr.Read(r.ctx, p)
+}
+
+func makeReader(ctx context.Context,
+	fr FrozenRef) *refReader {
+	return &refReader{ctx, fr}
+}
+
 func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) error {
 	node, err := getNodeRepr(tx, id)
 	if err != nil {
@@ -358,7 +372,7 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 				return err
 			}
 
-			buffer, err := ioutil.ReadAll(fr)
+			buffer, err := ioutil.ReadAll(makeReader(ctx, fr))
 			// buffer := make([]byte, node.Size)
 			// _, err = fr.Read(buffer)
 			dec := gob.NewDecoder(bytes.NewReader(buffer))
@@ -817,7 +831,7 @@ func (d *DataStore) Freeze(inode INode) (BlockID, error) {
 	return BID, err
 }
 
-func (d *DataStore) GetReadRef(ctx context.Context, inode INode) (io.ReadSeeker, error) {
+func (d *DataStore) GetReadRef(ctx context.Context, inode INode) (Reader, error) {
 	var node *NodeRepr
 	var err error
 

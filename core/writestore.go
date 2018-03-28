@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -32,7 +33,7 @@ func (w *WritableRefImp) Seek(offset int64, whence int) (int64, error) {
 	return w.offset, nil
 }
 
-func (w *WritableRefImp) Read(dest []byte) (int, error) {
+func (w *WritableRefImp) Read(ctx context.Context, dest []byte) (int, error) {
 	f, err := os.OpenFile(w.filename, os.O_RDONLY, 0755)
 	if err != nil {
 		return 0, err

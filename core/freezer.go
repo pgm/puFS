@@ -9,6 +9,8 @@ import (
 	"log"
 	"os"
 	"time"
+
+	"github.com/pgm/sply2/region"
 )
 
 var ChunkStat []byte = []byte("ChunkStat")
@@ -18,8 +20,11 @@ func NewFrozenRef(name string) FrozenRef {
 }
 
 type FrozenRefImp struct {
-	filename string
-	offset   int64
+	remote    RemoteRef
+	mask      *region.Mask
+	filename  string
+	offset    int64
+	chunkSize int
 }
 
 func (w *FrozenRefImp) Seek(offset int64, whence int) (int64, error) {
@@ -30,7 +35,47 @@ func (w *FrozenRefImp) Seek(offset int64, whence int) (int64, error) {
 	return w.offset, nil
 }
 
-func (w *FrozenRefImp) Read(dest []byte) (int, error) {
+func divideIntoChunks(chunkSize int, x []region.Region) []region.Region {
+	// TODO: make each region at most ChunkSize bytes long
+	return x
+}
+
+func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64) error {
+	// align the read region with ChunkSize
+	start = (start / int64(w.chunkSize)) * int64(w.chunkSize)
+	if end > w.remote.GetSize() {
+		end = w.remote.GetSize()
+	}
+	missingRegions := w.mask.GetMissing(start, end)
+	missingRegions = divideIntoChunks(w.chunkSize, missingRegions)
+
+	f, err := os.OpenFile(w.filename, os.O_RDWR, 0755)
+	if err != nil {
+		return err
+	}
+
+	for _, r := range missingRegions {
+		_, err = f.Seek(r.Start, 0)
+		if err != nil {
+			return err
+		}
+
+		err = w.remote.Copy(ctx, r.Start, r.End-r.Start, f)
+		if err != nil {
+			return err
+		}
+		w.mask.Add(r.Start, r.End)
+	}
+
+	return nil
+}
+
+func (w *FrozenRefImp) Read(ctx context.Context, dest []byte) (int, error) {
+	err := w.ensurePulled(ctx, w.offset, w.offset+int64(len(dest)))
+	if err != nil {
+		return 0, err
+	}
+
 	f, err := os.OpenFile(w.filename, os.O_RDONLY, 0755)
 	if err != nil {
 		return 0, err
@@ -57,19 +102,19 @@ func (w *FrozenRefImp) Release() {
 }
 
 type FreezerImp struct {
-	path string
-	db   KVStore
-	//	blocks map[BlockID]string
+	path      string
+	db        KVStore
+	chunkSize int
 }
 
-func NewFreezer(path string, db KVStore) *FreezerImp {
+func NewFreezer(path string, db KVStore, chunkSize int) *FreezerImp {
 	chunkPath := path + "/chunks"
 	err := os.MkdirAll(chunkPath, 0700)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	return &FreezerImp{path: chunkPath, db: db}
+	return &FreezerImp{path: chunkPath, db: db, chunkSize: chunkSize}
 }
 
 func (f *FreezerImp) Close() error {
@@ -80,9 +125,12 @@ func (f *FreezerImp) getPath(BID BlockID) string {
 	filename := fmt.Sprintf("%s/%s", f.path, base64.URLEncoding.EncodeToString(BID[:]))
 	return filename
 }
-
+func (f *FreezerImp) getRemote(BID BlockID) RemoteRef {
+	panic("unimp")
+}
 func (f *FreezerImp) GetRef(BID BlockID) (FrozenRef, error) {
 	filename := f.getPath(BID)
+	remote := f.getRemote(BID)
 	_, err := os.Stat(filename)
 	if os.IsNotExist(err) {
 		// fmt.Printf("Path %s does not exists\n", filename)
@@ -90,7 +138,10 @@ func (f *FreezerImp) GetRef(BID BlockID) (FrozenRef, error) {
 	}
 	// fmt.Printf("Path %s exists\n", filename)
 
-	return &FrozenRefImp{filename: filename}, nil
+	return &FrozenRefImp{remote: remote,
+		mask:      region.New(),
+		filename:  filename,
+		chunkSize: f.chunkSize}, nil
 }
 
 func computeHash(path string) (BlockID, error) {

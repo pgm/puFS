@@ -17,8 +17,13 @@ type Freezer interface {
 	IsPushed(BID BlockID) (bool, error)
 }
 
+type Reader interface {
+	io.Seeker
+	Read(ctx context.Context, p []byte) (n int, err error)
+}
+
 type FrozenRef interface {
-	io.ReadSeeker
+	Reader
 	Release()
 }
 
@@ -29,7 +34,7 @@ type RemoteRef interface {
 }
 
 type WritableRef interface {
-	io.ReadSeeker
+	Reader
 	io.Writer
 	Release()
 }
