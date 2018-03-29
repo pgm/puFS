@@ -18,7 +18,7 @@ func TestFreezePush(t *testing.T) {
 	require.Nil(err)
 
 	f := NewRemoteRefFactoryMem()
-	ds1 := NewDataStore(dir1, f, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	ds1 := NewDataStore(dir1, f, &RemoteRefFactory2Mock{}, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
 
 	aID := createFile(require, ds1, RootINode, "a", content)
 	err = ds1.Push(ctx, RootINode, "sample-label")
@@ -27,7 +27,7 @@ func TestFreezePush(t *testing.T) {
 
 	dir2, err := ioutil.TempDir("", "test")
 	require.Nil(err)
-	ds2 := NewDataStore(dir2, f, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	ds2 := NewDataStore(dir2, f, &RemoteRefFactory2Mock{}, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
 
 	err = ds2.MountByLabel(ctx, RootINode, "sample-label")
 	require.Nil(err)
@@ -37,7 +37,7 @@ func TestFreezePush(t *testing.T) {
 	r, err := ds2.GetReadRef(ctx, aID)
 	require.Nil(err)
 
-	buffer, err := ioutil.ReadAll(r)
+	buffer, err := ioutil.ReadAll(&FrozenReader{ctx, r})
 	require.Nil(err)
 
 	require.Equal(content, string(buffer))

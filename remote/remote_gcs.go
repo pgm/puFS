@@ -3,7 +3,6 @@ package sply2
 import (
 	"encoding/base64"
 	"encoding/gob"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"strings"
@@ -23,40 +22,6 @@ type RemoteGCS struct {
 	Key        string
 	Generation int64
 	Size       int64
-}
-
-func (r *RemoteGCS) Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error {
-	objHandle := r.Bucket.Object(r.Key)
-	if r.Generation != 0 {
-		objHandle = objHandle.If(storage.Conditions{GenerationMatch: r.Generation})
-	}
-
-	var reader io.ReadCloser
-	var err error
-	if offset != 0 || len != r.Size {
-		reader, err = objHandle.NewRangeReader(ctx, offset, len)
-	} else {
-		reader, err = objHandle.NewReader(ctx)
-	}
-	if err != nil {
-		return err
-	}
-	defer reader.Close()
-
-	// TODO: more full implementation
-	if offset != 0 || len != -1 {
-		panic("needs fuller implementation. Assume copy should start at begining and copy entire file")
-	}
-	n, err := io.Copy(writer, reader)
-	if err != nil {
-		return err
-	}
-
-	if len >= 0 && n != len {
-		return fmt.Errorf("Expected to copy to copy %d bytes but copied %d", len, n)
-	}
-
-	return nil
 }
 
 func (r *RemoteGCS) GetSize() int64 {

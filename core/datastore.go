@@ -51,7 +51,7 @@ func (d *DataStore) SetClients(httpClient HTTPClient, gcsClient GCSClient) {
 	d.gcsClient = gcsClient
 }
 
-func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory, freezerKV KVStore, nodeKV KVStore) *DataStore {
+func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory, rrf2 RemoteRefFactory2, freezerKV KVStore, nodeKV KVStore) *DataStore {
 	freezerPath := path.Join(storagePath, "freezer")
 	writablePath := path.Join(storagePath, "writable")
 	err := os.MkdirAll(freezerPath, 0700)
@@ -81,7 +81,7 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory, freezer
 		mountTablePath:   mountTablePath,
 		db:               NewINodeDB(1000, nodeKV),
 		writableStore:    NewWritableStore(writablePath),
-		freezer:          NewFreezer(freezerPath, freezerKV, chunkSize),
+		freezer:          NewFreezer(freezerPath, freezerKV, rrf2, chunkSize),
 		remoteRefFactory: remoteRefFactory}
 }
 

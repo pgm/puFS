@@ -26,7 +26,8 @@ func createFile(require *require.Assertions, d *DataStore, parent INode, name st
 }
 
 func newDataStore(dir string) *DataStore {
-	return NewDataStore(dir, nil, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	rrf2 := &RemoteRefFactory2Mock{}
+	return NewDataStore(dir, nil, rrf2, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
 }
 
 func testDataStore() *DataStore {
@@ -47,17 +48,17 @@ func TestPersistence(t *testing.T) {
 	}
 	freezerStore := NewMemStore([][]byte{ChunkStat})
 	nodeStore := NewMemStore([][]byte{ChildNodeBucket, NodeBucket})
-	ds1 := NewDataStore(dir, nil, freezerStore, nodeStore)
+	ds1 := NewDataStore(dir, nil, nil, freezerStore, nodeStore)
 	aID := createFile(require, ds1, RootINode, "a", "data")
 	ds1.Close()
 
-	ds2 := NewDataStore(dir, nil, freezerStore, nodeStore)
+	ds2 := NewDataStore(dir, nil, nil, freezerStore, nodeStore)
 
 	r, err := ds2.GetReadRef(ctx, aID)
 	require.Nil(err)
 
 	buffer := make([]byte, 4)
-	_, err = r.Read(buffer)
+	_, err = r.Read(ctx, buffer)
 	require.Nil(err)
 
 	require.Equal("data", string(buffer))
@@ -92,7 +93,7 @@ func TestWriteRead(t *testing.T) {
 	require.Nil(err)
 
 	buffer := make([]byte, 4)
-	_, err = r.Read(buffer)
+	_, err = r.Read(ctx, buffer)
 	require.Nil(err)
 
 	require.Equal("data", string(buffer))
@@ -113,7 +114,7 @@ func TestFreezeFile(t *testing.T) {
 	require.Nil(err)
 
 	buffer := make([]byte, 4)
-	_, err = r.Read(buffer)
+	_, err = r.Read(ctx, buffer)
 	require.Nil(err)
 
 	require.Equal("data", string(buffer))
@@ -121,7 +122,7 @@ func TestFreezeFile(t *testing.T) {
 	// now verify this is the same thing that's in the freezer
 	r, err = d.freezer.GetRef(BID)
 	require.Nil(err)
-	_, err = r.Read(buffer)
+	_, err = r.Read(ctx, buffer)
 	require.Equal("data", string(buffer))
 }
 
@@ -152,16 +153,23 @@ func TestFreezeDir(t *testing.T) {
 	require.NotEqual(aBID1, aBID3)
 }
 
+func extractNames(entries []*DirEntryWithID) []string {
+	names := make([]string, 0, 100)
+	for _, c := range entries {
+		names = append(names, c.Name)
+	}
+	return names
+}
+
 func TestRootDirListing(t *testing.T) {
 	require := require.New(t)
 	d := testDataStore()
 	ctx := context.Background()
 
 	createFile(require, d, RootINode, "a", "data")
-	names, err := d.GetDirContents(ctx, RootINode)
+	contents, err := d.GetDirContents(ctx, RootINode)
 	require.Nil(err)
-	require.Equal(1, len(names))
-	require.Equal("a", names[0])
+	require.Equal([]string{".", "..", "a"}, extractNames(contents))
 }
 
 func TestSubDirListing(t *testing.T) {
@@ -174,15 +182,13 @@ func TestSubDirListing(t *testing.T) {
 
 	createFile(require, d, aID, "b", "data")
 
-	names, err := d.GetDirContents(ctx, RootINode)
+	contents, err := d.GetDirContents(ctx, RootINode)
 	require.Nil(err)
-	require.Equal(1, len(names))
-	require.Equal("a", names[0])
+	require.Equal([]string{".", "..", "a"}, extractNames(contents))
 
-	names, err = d.GetDirContents(ctx, aID)
+	contents, err = d.GetDirContents(ctx, aID)
 	require.Nil(err)
-	require.Equal(1, len(names))
-	require.Equal("b", names[0])
+	require.Equal([]string{".", "..", "b"}, extractNames(contents))
 }
 
 // func TestMkdirErrors(t *testing.T) {
@@ -248,7 +254,7 @@ func TestRemote(t *testing.T) {
 	require.Nil(err)
 
 	buffer := make([]byte, 500)
-	_, err = r.Read(buffer)
+	_, err = r.Read(ctx, buffer)
 	require.Nil(err)
 
 	require.Equal("HTML", string(buffer))

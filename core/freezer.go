@@ -1,13 +1,17 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/gob"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/pgm/sply2/region"
@@ -15,16 +19,21 @@ import (
 
 var ChunkStat []byte = []byte("ChunkStat")
 
-func NewFrozenRef(name string) FrozenRef {
-	return &FrozenRefImp{filename: name}
-}
+// func NewFrozenRef(name string) FrozenRef {
+// 	return &FrozenRefImp{filename: name}
+// }
 
 type FrozenRefImp struct {
-	remote    RemoteRef
-	mask      *region.Mask
-	filename  string
-	offset    int64
-	chunkSize int
+	BID      BlockID
+	remote   RemoteRef
+	filename string
+	offset   int64
+	size     int64
+	owner    *FreezerImp
+}
+
+type BlockInfo struct {
+	Source interface{}
 }
 
 func (w *FrozenRefImp) Seek(offset int64, whence int) (int64, error) {
@@ -42,12 +51,18 @@ func divideIntoChunks(chunkSize int, x []region.Region) []region.Region {
 
 func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64) error {
 	// align the read region with ChunkSize
-	start = (start / int64(w.chunkSize)) * int64(w.chunkSize)
-	if end > w.remote.GetSize() {
-		end = w.remote.GetSize()
+	chunkSize := w.owner.chunkSize
+
+	start = (start / int64(chunkSize)) * int64(chunkSize)
+	end = ((end + int64(chunkSize) - 1) / int64(chunkSize)) * int64(chunkSize)
+	if end > w.size {
+		end = w.size
 	}
-	missingRegions := w.mask.GetMissing(start, end)
-	missingRegions = divideIntoChunks(w.chunkSize, missingRegions)
+	missingRegions, err := w.owner.getInvalidRegions(w.BID, start, end)
+	if err != nil {
+		return err
+	}
+	missingRegions = divideIntoChunks(chunkSize, missingRegions)
 
 	f, err := os.OpenFile(w.filename, os.O_RDWR, 0755)
 	if err != nil {
@@ -64,11 +79,20 @@ func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64)
 		if err != nil {
 			return err
 		}
-		w.mask.Add(r.Start, r.End)
+		w.owner.addValidRegion(w.BID, r.Start, r.End)
 	}
 
 	return nil
 }
+
+// // fmt.Printf("Performing copy of 0-%d\n", remoteRef.GetSize())
+// // copy with size = -1 to copy entire contents
+// err = remoteRef.Copy(ctx, 0, -1, fi)
+// // fmt.Printf("err from copy %s\n", err)
+// if err != nil {
+// 	return err
+// }
+// // s, err = os.Stat(filename)
 
 func (w *FrozenRefImp) Read(ctx context.Context, dest []byte) (int, error) {
 	err := w.ensurePulled(ctx, w.offset, w.offset+int64(len(dest)))
@@ -105,16 +129,22 @@ type FreezerImp struct {
 	path      string
 	db        KVStore
 	chunkSize int
+
+	refFactory RemoteRefFactory2
+
+	mutex        sync.Mutex
+	blockRegions map[BlockID]*region.Mask
 }
 
-func NewFreezer(path string, db KVStore, chunkSize int) *FreezerImp {
+func NewFreezer(path string, db KVStore, refFactory RemoteRefFactory2, chunkSize int) *FreezerImp {
 	chunkPath := path + "/chunks"
 	err := os.MkdirAll(chunkPath, 0700)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	return &FreezerImp{path: chunkPath, db: db, chunkSize: chunkSize}
+	return &FreezerImp{path: chunkPath, db: db, chunkSize: chunkSize,
+		blockRegions: make(map[BlockID]*region.Mask), refFactory: refFactory}
 }
 
 func (f *FreezerImp) Close() error {
@@ -125,23 +155,53 @@ func (f *FreezerImp) getPath(BID BlockID) string {
 	filename := fmt.Sprintf("%s/%s", f.path, base64.URLEncoding.EncodeToString(BID[:]))
 	return filename
 }
-func (f *FreezerImp) getRemote(BID BlockID) RemoteRef {
-	panic("unimp")
+func (f *FreezerImp) getRemote(BID BlockID) (RemoteRef, error) {
+	var source interface{}
+
+	err := f.db.View(func(tx RTx) error {
+		info, err := f.readChunkInfo(BID, tx)
+		if err != nil {
+			return err
+		}
+		source = info.Source
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if source == nil {
+		return nil, nil
+	}
+
+	return f.refFactory.GetRef(source), nil
 }
 func (f *FreezerImp) GetRef(BID BlockID) (FrozenRef, error) {
 	filename := f.getPath(BID)
-	remote := f.getRemote(BID)
-	_, err := os.Stat(filename)
+	remote, err := f.getRemote(BID)
+	if err != nil {
+		return nil, err
+	}
+	st, err := os.Stat(filename)
 	if os.IsNotExist(err) {
 		// fmt.Printf("Path %s does not exists\n", filename)
 		return nil, nil
 	}
 	// fmt.Printf("Path %s exists\n", filename)
 
-	return &FrozenRefImp{remote: remote,
-		mask:      region.New(),
-		filename:  filename,
-		chunkSize: f.chunkSize}, nil
+	var size int64
+	if remote != nil {
+		size = remote.GetSize()
+	} else {
+		size = st.Size()
+	}
+
+	return &FrozenRefImp{BID: BID,
+		remote:   remote,
+		owner:    f,
+		filename: filename,
+		size:     size}, nil
 }
 
 func computeHash(path string) (BlockID, error) {
@@ -178,26 +238,141 @@ func (f *FreezerImp) hasChunk(BID BlockID) (bool, error) {
 	return value != nil, nil
 }
 
-func (f *FreezerImp) writeChunkStatus(BID BlockID, isRemote bool) error {
-	err := f.db.Update(func(tx RWTx) error {
-		chunkStat := tx.WBucket(ChunkStat)
-		value := make([]byte, 1)
-		if isRemote {
-			value[0] = 1
+func (f *FreezerImp) ensureRegionsCached(BID BlockID) (*region.Mask, error) {
+	mask := f.blockRegions[BID]
+	if mask == nil {
+		regionLog := f.getPath(BID) + ".regions"
+
+		mask = region.New()
+
+		fp, err := os.Open(regionLog)
+
+		readInt := func() (int64, error) {
+			b := make([]byte, 8)
+			_, err := fp.Read(b)
+			if err != nil {
+				return 0, err
+			}
+			return int64(binary.LittleEndian.Uint64(b)), nil
 		}
-		return chunkStat.Put(BID[:], value)
+
+		if err == nil {
+			defer fp.Close()
+
+			for {
+				start, err := readInt()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					return nil, err
+				}
+				end, err := readInt()
+				if err != nil {
+					return nil, err
+				}
+				mask.Add(start, end)
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+
+		f.blockRegions[BID] = mask
+	}
+
+	return mask, nil
+}
+
+func (f *FreezerImp) addValidRegion(BID BlockID, start int64, end int64) error {
+	regionLog := f.getPath(BID) + ".regions"
+
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	mask, err := f.ensureRegionsCached(BID)
+	if err != nil {
+		return err
+	}
+
+	fp, err := os.OpenFile(regionLog, os.O_CREATE|os.O_APPEND, 0777)
+	if err != nil {
+		return err
+	}
+	defer fp.Close()
+
+	writeInt := func(v int64) error {
+		b := make([]byte, 8)
+		binary.LittleEndian.PutUint64(b, uint64(v))
+		_, err := fp.Write(b)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	writeInt(start)
+	writeInt(end)
+	mask.Add(start, end)
+
+	return nil
+}
+
+func (f *FreezerImp) getInvalidRegions(BID BlockID, start int64, end int64) ([]region.Region, error) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	mask, err := f.ensureRegionsCached(BID)
+	if err != nil {
+		return nil, err
+	}
+
+	return mask.GetMissing(start, end), nil
+}
+
+// func (f *FreezerImp) getRemoteRef(BID BlockID) RemoteRef {
+// }
+
+func (f *FreezerImp) writeChunkInfo(BID BlockID, info *BlockInfo) error {
+	buffer := bytes.NewBuffer(make([]byte, 0, 1000))
+	enc := gob.NewEncoder(buffer)
+	err := enc.Encode(info)
+	if err != nil {
+		return err
+	}
+
+	infoBytes := buffer.Bytes()
+
+	err = f.db.Update(func(tx RWTx) error {
+		chunkStat := tx.WBucket(ChunkStat)
+		return chunkStat.Put(BID[:], infoBytes)
 	})
 	return err
 }
 
+func (f *FreezerImp) readChunkInfo(BID BlockID, tx RTx) (*BlockInfo, error) {
+	chunkStat := tx.RBucket(ChunkStat)
+	buffer := chunkStat.Get(BID[:])
+	dec := gob.NewDecoder(bytes.NewReader(buffer))
+	var info BlockInfo
+	err := dec.Decode(&info)
+	if err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
 func (f *FreezerImp) IsPushed(BID BlockID) (bool, error) {
 	var pushed bool
-	err := f.db.View(func(tx RTx) error {
-		chunkStat := tx.RBucket(ChunkStat)
-		value := chunkStat.Get(BID[:])
-		pushed = value[0] != 0
+	var err error
+	err = f.db.View(func(tx RTx) error {
+		info, err := f.readChunkInfo(BID, tx)
+		if err != nil {
+			return err
+		}
+		pushed = info.Source != nil
 		return nil
 	})
+
 	return pushed, err
 }
 
@@ -226,7 +401,13 @@ func (f *FreezerImp) AddFile(path string) (*NewBlock, error) {
 		panic("File disappeared after move or could not stat")
 	}
 
-	err = f.writeChunkStatus(BID, false)
+	err = f.addValidRegion(BID, 0, st.Size())
+	if err != nil {
+		panic("Could not mark file as fully valid")
+	}
+
+	// TODO: Change "status" to include remote definition and path to chunklist (?)
+	err = f.writeChunkInfo(BID, &BlockInfo{})
 	if err != nil {
 		return nil, err
 	}
@@ -255,16 +436,7 @@ func (f *FreezerImp) AddBlock(ctx context.Context, BID BlockID, remoteRef Remote
 
 	defer fi.Close()
 
-	// fmt.Printf("Performing copy of 0-%d\n", remoteRef.GetSize())
-	// copy with size = -1 to copy entire contents
-	err = remoteRef.Copy(ctx, 0, -1, fi)
-	// fmt.Printf("err from copy %s\n", err)
-	if err != nil {
-		return err
-	}
-	// s, err = os.Stat(filename)
-
-	err = f.writeChunkStatus(BID, true)
+	err = f.writeChunkInfo(BID, &BlockInfo{Source: remoteRef.GetSource()})
 	if err != nil {
 		return err
 	}
