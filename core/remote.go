@@ -7,8 +7,14 @@ import (
 )
 
 type GCSObjectSource struct {
-	Bucket string
-	Key    string
+	Bucket     string
+	Key        string
+	Generation int64
+}
+
+type URLSource struct {
+	URL  string
+	ETag string
 }
 
 type RemoteFile struct {
@@ -17,14 +23,12 @@ type RemoteFile struct {
 	Size    int64
 	ModTime time.Time
 
-	// Fields for Remote GCS
-	Bucket     string
-	Key        string
-	Generation int64
+	RemoteSource interface{}
 }
 
+//TODO: Rename this "RemoteRepo"
+// Change all references to Bucket/Key/URL to pointer to RemoteSource interface{}
 type RemoteRefFactory interface {
-	GetRef(ctx context.Context, node *NodeRepr) (RemoteRef, error)
 	Push(ctx context.Context, BID BlockID, rr FrozenRef) error
 	SetLease(ctx context.Context, name string, expiry time.Time, BID BlockID) error
 	SetRoot(ctx context.Context, name string, BID BlockID) error

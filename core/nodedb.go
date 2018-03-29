@@ -32,14 +32,7 @@ type NodeRepr struct {
 
 	BID BlockID
 
-	// Fields for Remote URL
-	URL  string
-	ETag string
-
-	// Fields for Remote GCS
-	Bucket     string
-	Key        string
-	Generation int64
+	RemoteSource interface{}
 
 	IsDeferredChildFetch bool
 
@@ -293,7 +286,7 @@ func assertValidDir(tx RTx, id INode) error {
 
 func (db *INodeDB) addBlockLazyChildren(tx RWTx, parent INode, children []DirEntry) error {
 	for _, child := range children {
-		if child.BID == NABlock && child.Bucket == "" && child.URL == "" {
+		if child.BID == NABlock && child.RemoteSource == nil {
 			panic("Child file missing BlockID")
 		}
 		newNodeID, err := db.getNextFreeInode(tx)
@@ -305,11 +298,7 @@ func (db *INodeDB) addBlockLazyChildren(tx RWTx, parent INode, children []DirEnt
 			Size:                 child.Size,
 			ModTime:              child.ModTime,
 			BID:                  child.BID,
-			URL:                  child.URL,
-			ETag:                 child.ETag,
-			Bucket:               child.Bucket,
-			Key:                  child.Key,
-			Generation:           child.Generation,
+			RemoteSource:         child.RemoteSource,
 			IsDeferredChildFetch: child.IsDir})
 		if err != nil {
 			return err
@@ -332,9 +321,7 @@ func (db *INodeDB) addRemoteLazyChildren(tx RWTx, parent INode, children []*Remo
 			IsDir:                child.IsDir,
 			Size:                 child.Size,
 			ModTime:              child.ModTime,
-			Bucket:               child.Bucket,
-			Key:                  child.Key,
-			Generation:           child.Generation,
+			RemoteSource:         child.RemoteSource,
 			IsDeferredChildFetch: child.IsDir})
 		if err != nil {
 			return err
@@ -503,10 +490,11 @@ func addRemoteGCS(tx RWTx, parentINode INode, inode INode, bucket string, key st
 		copy(BID[:], hashID)
 	}
 	return putNodeRepr(tx, inode, &NodeRepr{ParentINode: parentINode,
-		IsDir:                isDir,
-		Bucket:               bucket,
-		Key:                  key,
-		Generation:           generation,
+		IsDir: isDir,
+		RemoteSource: &GCSObjectSource{
+			Bucket:     bucket,
+			Key:        key,
+			Generation: generation},
 		Size:                 size,
 		ModTime:              modTime,
 		BID:                  BID,
@@ -542,7 +530,10 @@ func addRemoteURL(tx RWTx, parentINode INode, inode INode, url string, etag stri
 	hashID := Sha256.Sum([]byte(url + etag))
 	var BID BlockID
 	copy(BID[:], hashID)
-	return putNodeRepr(tx, inode, &NodeRepr{ParentINode: parentINode, IsDir: false, URL: url, ETag: etag, Size: size, ModTime: modTime, BID: BID})
+	return putNodeRepr(tx, inode, &NodeRepr{ParentINode: parentINode,
+		IsDir:        false,
+		RemoteSource: &URLSource{URL: url, ETag: etag},
+		Size:         size, ModTime: modTime, BID: BID})
 }
 
 // func (db *INodeDB) AddRemoteObject(tx RTx, parent INode, name string, bucket string, key string, size int64, ModTime time.Time) (INode, error) {

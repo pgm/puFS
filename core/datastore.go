@@ -25,13 +25,14 @@ type Mount struct {
 }
 
 type DataStore struct {
-	path             string
-	mountTablePath   string
-	db               *INodeDB
-	freezer          Freezer
-	writableStore    WriteableStore
-	remoteRefFactory RemoteRefFactory
-	mounts           []*Mount
+	path              string
+	mountTablePath    string
+	db                *INodeDB
+	freezer           Freezer
+	remoteRefFactory2 RemoteRefFactory2
+	writableStore     WriteableStore
+	remoteRefFactory  RemoteRefFactory
+	mounts            []*Mount
 	// locker        *INodeLocker
 
 	httpClient HTTPClient
@@ -78,11 +79,12 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory, rrf2 Re
 
 	chunkSize := 100 * 1024
 	return &DataStore{path: storagePath,
-		mountTablePath:   mountTablePath,
-		db:               NewINodeDB(1000, nodeKV),
-		writableStore:    NewWritableStore(writablePath),
-		freezer:          NewFreezer(freezerPath, freezerKV, rrf2, chunkSize),
-		remoteRefFactory: remoteRefFactory}
+		mountTablePath:    mountTablePath,
+		db:                NewINodeDB(1000, nodeKV),
+		writableStore:     NewWritableStore(writablePath),
+		remoteRefFactory2: rrf2,
+		freezer:           NewFreezer(freezerPath, freezerKV, rrf2, chunkSize),
+		remoteRefFactory:  remoteRefFactory}
 }
 
 func (d *DataStore) persistMountTable() {
@@ -319,12 +321,7 @@ func (d *DataStore) GetDirContents(ctx context.Context, id INode) ([]*DirEntryWi
 
 					BID: node.BID,
 
-					URL:  node.URL,
-					ETag: node.ETag,
-
-					Bucket:     node.Bucket,
-					Key:        node.Key,
-					Generation: node.Generation}}
+					RemoteSource: node.RemoteSource}}
 			entries = append(entries, entry)
 		}
 
@@ -359,7 +356,7 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 	}
 	if node.IsDir && node.IsDeferredChildFetch {
 		if node.BID != NABlock {
-			remoteRef, err := d.remoteRefFactory.GetRef(ctx, node)
+			remoteRef := d.remoteRefFactory2.GetRef(node.RemoteSource)
 			if err != nil {
 				return err
 			}
@@ -763,16 +760,12 @@ func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) 
 
 			dirTable = append(dirTable,
 				DirEntry{
-					Name:       child.Name,
-					IsDir:      childNode.IsDir,
-					Size:       childNode.Size,
-					ModTime:    childNode.ModTime,
-					BID:        childNode.BID,
-					URL:        childNode.URL,
-					ETag:       childNode.ETag,
-					Bucket:     childNode.Bucket,
-					Key:        childNode.Key,
-					Generation: childNode.Generation})
+					Name:         child.Name,
+					IsDir:        childNode.IsDir,
+					Size:         childNode.Size,
+					ModTime:      childNode.ModTime,
+					BID:          childNode.BID,
+					RemoteSource: childNode.RemoteSource})
 		}
 
 		newBlock, err := freezeDir(tempDir, freezer, &Dir{dirTable})
@@ -877,11 +870,7 @@ func (d *DataStore) GetReadRef(ctx context.Context, inode INode) (Reader, error)
 
 func (d *DataStore) pullIntoFreezer(ctx context.Context, node *NodeRepr) error {
 	// fmt.Printf("Pulling %s/%s\n", node.Bucket, node.Key)
-	remote, err := d.remoteRefFactory.GetRef(ctx, node)
-	if err != nil {
-		return err
-	}
-
+	remote := d.remoteRefFactory2.GetRef(node.RemoteSource)
 	return d.freezer.AddBlock(ctx, node.BID, remote)
 }
 

@@ -1,4 +1,4 @@
-package sply2
+package remote
 
 import (
 	"encoding/base64"

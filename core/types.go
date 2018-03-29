@@ -47,12 +47,7 @@ type DirEntry struct {
 
 	BID BlockID // maybe lift this up to header block as previously considered. Would allow GC to trace references without reading/parsing whole block
 
-	URL  string
-	ETag string
-
-	Bucket     string
-	Key        string
-	Generation int64
+	RemoteSource interface{}
 }
 
 type DirEntryWithID struct {
