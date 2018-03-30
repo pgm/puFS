@@ -1,3 +1,5 @@
+// +build broken_test
+
 package core
 
 import (

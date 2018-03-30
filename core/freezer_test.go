@@ -37,12 +37,12 @@ func (rf *RemoteRefFactory2Mock) GetRef(source interface{}) RemoteRef {
 	default:
 		panic("unknown type")
 
-	case *string:
-		return &RemoteRefFactory2MockRef{rf, s}
-	case *URLSource:
-		return &URLRemoteRef{source.URL, source.ETag}
-	case *GCSObjectSource:
-		return &GCSRemoteRef{source.URL, source.ETag}
+	case string:
+		return &RemoteRefFactory2MockRef{rf, source}
+		// case *URLSource:
+		// 	return &URLRemoteRef{source.URL, source.ETag}
+		// case *GCSObjectSource:
+		// 	return &GCSRemoteRef{source.URL, source.ETag}
 	}
 }
 
