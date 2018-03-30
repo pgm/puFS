@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/gob"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -357,7 +358,14 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 	}
 	if node.IsDir && node.IsDeferredChildFetch {
 		if node.BID != NABlock {
-			remoteSource := d.remoteRefFactory.GetBlockSource(node.BID)
+			remoteSource, err := d.remoteRefFactory.GetBlockSource(ctx, node.BID)
+			if err != nil {
+				return err
+			}
+			if remoteSource == nil {
+				panic("got a nil source for block")
+			}
+			fmt.Printf("remoteSource=%v\n", remoteSource)
 
 			remoteRef := d.remoteRefFactory2.GetRef(remoteSource)
 			if err != nil {
@@ -877,13 +885,19 @@ func (d *DataStore) GetReadRef(ctx context.Context, inode INode) (Reader, error)
 
 func (d *DataStore) pullIntoFreezer(ctx context.Context, node *NodeRepr) error {
 	var remoteSource interface{}
+	var err error
 	if node.RemoteSource == nil {
-		remoteSource = d.remoteRefFactory.GetBlockSource(node.BID)
+		remoteSource, err = d.remoteRefFactory.GetBlockSource(ctx, node.BID)
 	} else {
 		remoteSource = node.RemoteSource
 	}
+	if err != nil {
+		return err
+	}
 	remote := d.remoteRefFactory2.GetRef(remoteSource)
-	return d.freezer.AddBlock(ctx, node.BID, remote)
+	err = d.freezer.AddBlock(ctx, node.BID, remote)
+
+	return err
 }
 
 func validateName(name string) error {

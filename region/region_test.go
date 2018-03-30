@@ -80,7 +80,7 @@ func TestMiddle(t *testing.T) {
 func rString(rs []Region) string {
 	var s []string
 	for i := range rs {
-		s = append(s, fmt.Sprintf("%d-%d", rs[i].start, rs[i].end))
+		s = append(s, fmt.Sprintf("%d-%d", rs[i].Start, rs[i].End))
 	}
 
 	return strings.Join(s, " ")

@@ -165,8 +165,13 @@ func (rrf *RemoteRefFactoryImp) GetGCSAttr(ctx context.Context, bucket string, k
 	return &core.GCSAttrs{Generation: attrs.Generation, IsDir: false, ModTime: attrs.Updated, Size: attrs.Size}, nil
 }
 
-func (rrf *RemoteRefFactoryImp) GetBlockSource(BID core.BlockID) interface{} {
-	return &core.GCSObjectSource{Bucket: rrf.Bucket, Key: core.GetBlockKey(rrf.CASKeyPrefix, BID)}
+func (rrf *RemoteRefFactoryImp) GetBlockSource(ctx context.Context, BID core.BlockID) (interface{}, error) {
+	key := core.GetBlockKey(rrf.CASKeyPrefix, BID)
+	attr, err := rrf.GetGCSAttr(ctx, rrf.Bucket, key)
+	if err != nil {
+		return nil, err
+	}
+	return &core.GCSObjectSource{Bucket: rrf.Bucket, Key: key, Size: attr.Size}, nil
 }
 
 func (rrf *RemoteRefFactoryImp) Push(ctx context.Context, BID core.BlockID, rr core.FrozenRef) error {
@@ -274,7 +279,8 @@ func getChildNodes(ctx context.Context, GCSClient *storage.Client, Bucket string
 				ModTime: next.Updated,
 				RemoteSource: &core.GCSObjectSource{Bucket: Bucket,
 					Key:        next.Name,
-					Generation: next.Generation}}
+					Generation: next.Generation,
+					Size:       next.Size}}
 		}
 
 		result = append(result, file)

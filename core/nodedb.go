@@ -494,7 +494,8 @@ func addRemoteGCS(tx RWTx, parentINode INode, inode INode, bucket string, key st
 		RemoteSource: &GCSObjectSource{
 			Bucket:     bucket,
 			Key:        key,
-			Generation: generation},
+			Generation: generation,
+			Size:       size},
 		Size:                 size,
 		ModTime:              modTime,
 		BID:                  BID,

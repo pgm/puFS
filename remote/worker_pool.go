@@ -30,7 +30,7 @@ type GetChildNodesResponse struct {
 }
 
 type GCSPool struct {
-	serviceAccountFile string // "/Users/pmontgom/gcs-keys/gcs-test-b3b10d9077bb.json"
+	serviceAccountFile string
 	queue              chan interface{}
 	client             *storage.Client
 }

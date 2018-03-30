@@ -10,6 +10,7 @@ import (
 	"github.com/pgm/sply2"
 	"github.com/pgm/sply2/core"
 	"github.com/pgm/sply2/fs"
+	"github.com/pgm/sply2/remote"
 	"google.golang.org/api/option"
 )
 
@@ -31,13 +32,12 @@ func NewDataStore(dir string) *core.DataStore {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 	bucketName := "gcs-test-1136"
-	f := sply2.NewRemoteRefFactory(client, bucketName, "blocks/")
+	f := remote.NewRemoteRefFactory(client, bucketName, "blocks/")
 	// if err != nil {
 	// 	log.Fatalf("Failed to create remote: %v", err)
 	// }
-	ds := core.NewDataStore(dir, f, sply2.NewBoltDB(path.Join(dir, "freezer.db"), [][]byte{core.ChunkStat}),
+	ds := core.NewDataStore(dir, f, f, sply2.NewBoltDB(path.Join(dir, "freezer.db"), [][]byte{core.ChunkStat}),
 		sply2.NewBoltDB(path.Join(dir, "nodes.db"), [][]byte{core.ChildNodeBucket, core.NodeBucket}))
-	ds.SetClients(f, f)
 	return ds
 }
 

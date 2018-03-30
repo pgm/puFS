@@ -18,6 +18,7 @@ import (
 	"github.com/chzyer/readline"
 	"github.com/pgm/sply2"
 	"github.com/pgm/sply2/core"
+	"github.com/pgm/sply2/remote"
 	"google.golang.org/api/option"
 )
 
@@ -139,10 +140,10 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 	} else if statementType == ReadStatement {
 		inode, err = e.getINode(ctx, match[1])
 		if err == nil {
-			var r io.Reader
+			var r core.Reader
 			r, err = e.ds.GetReadRef(ctx, inode)
 			if err == nil {
-				b, err := ioutil.ReadAll(r)
+				b, err := ioutil.ReadAll(&core.FrozenReader{ctx, r})
 				if err == nil {
 					fmt.Println(string(b))
 				}
@@ -230,13 +231,12 @@ func NewDataStore(dir string) *Execution {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 	bucketName := "gcs-test-1136"
-	f := sply2.NewRemoteRefFactory(client, bucketName, "blocks/")
+	f := remote.NewRemoteRefFactory(client, bucketName, "blocks/")
 	// if err != nil {
 	// 	log.Fatalf("Failed to create remote: %v", err)
 	// }
-	ds := core.NewDataStore(dir, f, sply2.NewBoltDB(path.Join(dir, "freezer.db"), [][]byte{core.ChunkStat}),
+	ds := core.NewDataStore(dir, f, f, sply2.NewBoltDB(path.Join(dir, "freezer.db"), [][]byte{core.ChunkStat}),
 		sply2.NewBoltDB(path.Join(dir, "nodes.db"), [][]byte{core.ChildNodeBucket, core.NodeBucket}))
-	ds.SetClients(f, f)
 	return &Execution{ds: ds, cwd: "/"}
 }
 

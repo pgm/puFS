@@ -1,7 +1,6 @@
 package region
 
 import (
-	"fmt"
 	"sort"
 )
 
@@ -60,7 +59,6 @@ func (m *Mask) GetMissing(start int64, end int64) []Region {
 }
 
 func (m *Mask) addDisjoint(start int64, end int64) {
-	fmt.Printf("addDisjoint(%d, %d)\n", start, end)
 	if start == end {
 		return
 	}

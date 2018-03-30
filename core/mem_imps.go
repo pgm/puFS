@@ -120,8 +120,8 @@ func (m *MemCopy) GetChildNodes(ctx context.Context) ([]*RemoteFile, error) {
 	panic("unimp")
 }
 
-func (rm *RemoteRefFactoryMem) GetBlockSource(BID BlockID) interface{} {
-	return BID
+func (rm *RemoteRefFactoryMem) GetBlockSource(ctx context.Context, BID BlockID) (interface{}, error) {
+	return BID, nil
 }
 
 func (m *MemCopy) Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error {
@@ -208,15 +208,17 @@ func (r *RemoteRefFactoryMem) GetChildNodes(ctx context.Context, node *NodeRepr)
 				name = name[:nextSlash]
 				dirs[name] = true
 			} else {
+				size := int64(len(value))
 				rec := &RemoteFile{
 					Name:    name,
 					IsDir:   false,
-					Size:    int64(len(value)),
+					Size:    size,
 					ModTime: now,
 					RemoteSource: &GCSObjectSource{
 						Bucket:     source.Bucket,
 						Key:        key,
-						Generation: 1}}
+						Generation: 1,
+						Size:       size}}
 				result = append(result, rec)
 			}
 		}

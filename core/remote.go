@@ -31,7 +31,7 @@ type RemoteFile struct {
 //TODO: Rename this "RemoteRepo"
 // Change all references to Bucket/Key/URL to pointer to RemoteSource interface{}
 type RemoteRefFactory interface {
-	GetBlockSource(BID BlockID) interface{}
+	GetBlockSource(ctx context.Context, BID BlockID) (interface{}, error)
 	Push(ctx context.Context, BID BlockID, rr FrozenRef) error
 	SetLease(ctx context.Context, name string, expiry time.Time, BID BlockID) error
 	SetRoot(ctx context.Context, name string, BID BlockID) error

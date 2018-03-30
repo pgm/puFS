@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"os"
 	"testing"
 	"time"
 
@@ -17,12 +18,22 @@ import (
 	"golang.org/x/net/context"
 )
 
-func testClient() *storage.Client {
+const ServiceFile = "/Users/pmontgom/gcs-keys/gcs-test-b3b10d9077bb.json"
+
+func needsServiceFile(t *testing.T) {
+	if _, err := os.Stat(ServiceFile); os.IsNotExist(err) {
+		t.Skipf("Service cred file is missing: %s", ServiceFile)
+	}
+}
+
+func testClient(t *testing.T) *storage.Client {
+	needsServiceFile(t)
+
 	ctx := context.Background()
 	//	projectID := "gcs-test-1136"
 
 	// Creates a client.
-	client, err := storage.NewClient(ctx, option.WithServiceAccountFile("/Users/pmontgom/gcs-keys/gcs-test-b3b10d9077bb.json"))
+	client, err := storage.NewClient(ctx, option.WithServiceAccountFile(ServiceFile))
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
@@ -37,7 +48,7 @@ func generateUniqueString() string {
 
 func TestListChildren(t *testing.T) {
 	require := require.New(t)
-	client := testClient()
+	client := testClient(t)
 
 	f := NewRemoteRefFactory(client, BucketName, "test/")
 	ref := f.GetRef(&core.GCSObjectSource{Bucket: BucketName, Key: "test-data/"})
@@ -79,11 +90,11 @@ func (m *mockFrozenReader) Release() {
 
 func TestBlockPushPull(t *testing.T) {
 	require := require.New(t)
-	client := testClient()
+	client := testClient(t)
 
 	body := generateUniqueString()
 	b := client.Bucket(BucketName)
-	o := b.Object("test/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	o := b.Object("test/CAS/AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	ctx := context.Background()
 	o.Delete(ctx)
 
@@ -91,6 +102,7 @@ func TestBlockPushPull(t *testing.T) {
 	f := NewRemoteRefFactory(client, BucketName, "test/")
 	mfr := &mockFrozenReader{bytes.NewReader([]byte(body))}
 	err := f.Push(ctx, BID, mfr)
+	require.Nil(err)
 
 	r, err := o.NewReader(ctx)
 	require.Nil(err)
@@ -101,7 +113,8 @@ func TestBlockPushPull(t *testing.T) {
 	require.Equal(body, string(buffer))
 
 	bb := bytes.NewBuffer(make([]byte, 0, 100))
-	s := f.GetBlockSource(BID)
+	s, err := f.GetBlockSource(ctx, BID)
+	require.Nil(err)
 	ref := f.GetRef(s)
 	require.Nil(err)
 	err = ref.Copy(ctx, 0, int64(len(body)), bb)
@@ -111,7 +124,7 @@ func TestBlockPushPull(t *testing.T) {
 
 func TestGCSClient(t *testing.T) {
 	require := require.New(t)
-	client := testClient()
+	client := testClient(t)
 
 	ctx := context.Background()
 
@@ -136,11 +149,13 @@ func TestGCSClient(t *testing.T) {
 // }
 
 func TestDatastoreWithGCSRemote(t *testing.T) {
+	needsServiceFile(t)
+
 	var x *core.GCSObjectSource
 	gob.Register(x)
 	require := require.New(t)
 	ctx := context.Background()
-	client, err := storage.NewClient(ctx, option.WithServiceAccountFile("/Users/pmontgom/gcs-keys/gcs-test-b3b10d9077bb.json"))
+	client, err := storage.NewClient(ctx, option.WithServiceAccountFile(ServiceFile))
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
@@ -158,6 +173,7 @@ func TestDatastoreWithGCSRemote(t *testing.T) {
 
 	b := make([]byte, 100)
 	n, err := r.Read(ctx, b)
+	require.Nil(err)
 	require.Equal(5, n)
 	require.Equal("hello", string(b[:n]))
 
@@ -170,7 +186,7 @@ func TestDatastoreWithGCSRemote(t *testing.T) {
 
 func newFullDataStore() *core.DataStore {
 	ctx := context.Background()
-	client, err := storage.NewClient(ctx, option.WithServiceAccountFile("/Users/pmontgom/gcs-keys/gcs-test-b3b10d9077bb.json"))
+	client, err := storage.NewClient(ctx, option.WithServiceAccountFile(ServiceFile))
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
@@ -185,6 +201,20 @@ func newFullDataStore() *core.DataStore {
 	ds.SetClients(f)
 
 	return ds
+}
+
+func TestImportPublicData(t *testing.T) {
+	var x *core.GCSObjectSource
+	gob.Register(x)
+	require := require.New(t)
+
+	ds := newFullDataStore()
+	ctx := context.Background()
+	inode, err := ds.AddRemoteGCS(ctx, core.RootINode, "gcs", "gcp-public-data-sentinel-2", "/")
+	require.Nil(err)
+
+	entries, err := ds.GetDirContents(ctx, inode)
+	require.True(len(entries) > 1)
 }
 
 func TestMount(t *testing.T) {
@@ -226,18 +256,4 @@ func TestMount(t *testing.T) {
 	require.Nil(err)
 
 	require.Equal(body, string(buffer))
-}
-
-func TestImportPublicData(t *testing.T) {
-	var x *core.GCSObjectSource
-	gob.Register(x)
-	require := require.New(t)
-
-	ds := newFullDataStore()
-	ctx := context.Background()
-	inode, err := ds.AddRemoteGCS(ctx, core.RootINode, "gcs", "gcp-public-data-sentinel-2", "/")
-	require.Nil(err)
-
-	entries, err := ds.GetDirContents(ctx, inode)
-	require.True(len(entries) > 1)
 }
