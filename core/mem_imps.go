@@ -116,6 +116,14 @@ func (m *MemCopy) GetSize() int64 {
 	return int64(len(m.buffer))
 }
 
+func (m *MemCopy) GetChildNodes(ctx context.Context) ([]*RemoteFile, error) {
+	panic("unimp")
+}
+
+func (rm *RemoteRefFactoryMem) GetBlockSource(BID BlockID) interface{} {
+	return BID
+}
+
 func (m *MemCopy) Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error {
 	n, err := writer.Write(m.buffer[offset : offset+len])
 	if n != int(len) {
@@ -229,4 +237,52 @@ func (r *RemoteRefFactoryMem) GetChildNodes(ctx context.Context, node *NodeRepr)
 	}
 
 	return nil, nil
+}
+
+type MemRemoteRefFactory2 struct {
+	repo *RemoteRefFactoryMem
+}
+
+func NewMemRemoteRefFactory2(repo *RemoteRefFactoryMem) RemoteRefFactory2 {
+	return &MemRemoteRefFactory2{repo}
+}
+
+func (m *MemRemoteRefFactory2) GetRef(source interface{}) RemoteRef {
+	BID := source.(BlockID)
+	return &MemRemoteRef{m.repo, BID}
+}
+
+type MemRemoteRef struct {
+	repo *RemoteRefFactoryMem
+	BID  BlockID
+}
+
+func (m *MemRemoteRef) GetSize() int64 {
+	key := GetBlockKey(m.repo.prefix, m.BID)
+	buffer, ok := m.repo.objects[key]
+	if !ok {
+		panic("Attempted to get size of non-existant key")
+	}
+	return int64(len(buffer))
+}
+
+func (m *MemRemoteRef) Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error {
+	key := GetBlockKey(m.repo.prefix, m.BID)
+	data, ok := m.repo.objects[key]
+	if !ok {
+		panic("Attempted to get data of non-existant key")
+	}
+	_, err := writer.Write(data[offset : offset+len])
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *MemRemoteRef) GetSource() interface{} {
+	return m.BID
+}
+
+func (m *MemRemoteRef) GetChildNodes(ctx context.Context) ([]*RemoteFile, error) {
+	panic("unimp")
 }

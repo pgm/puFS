@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"testing"
@@ -9,20 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type RemoteRefFactory2Mock struct {
+type PullCountRefFactoryMock struct {
 	bytesRead int
 }
 
-type RemoteRefFactory2MockRef struct {
-	owner *RemoteRefFactory2Mock
+type PullCountRefFactoryMockRef struct {
+	owner *PullCountRefFactoryMock
 	id    string
 }
 
-func NewRemoteRefFactory2Mock() *RemoteRefFactory2Mock {
-	return &RemoteRefFactory2Mock{}
-}
-
-func (rf *RemoteRefFactory2Mock) GetRef(source interface{}) RemoteRef {
+func (rf *PullCountRefFactoryMock) GetRef(source interface{}) RemoteRef {
 	// switch r := r.(type) {
 	// default:
 	// 	// Note: To FUSE, ENOSYS means "this server never implements this request."
@@ -35,10 +32,10 @@ func (rf *RemoteRefFactory2Mock) GetRef(source interface{}) RemoteRef {
 
 	switch source := source.(type) {
 	default:
-		panic("unknown type")
+		panic(fmt.Sprintf("unknown type: %v", source))
 
 	case string:
-		return &RemoteRefFactory2MockRef{rf, source}
+		return &PullCountRefFactoryMockRef{rf, source}
 		// case *URLSource:
 		// 	return &URLRemoteRef{source.URL, source.ETag}
 		// case *GCSObjectSource:
@@ -46,26 +43,31 @@ func (rf *RemoteRefFactory2Mock) GetRef(source interface{}) RemoteRef {
 	}
 }
 
-func (rr *RemoteRefFactory2MockRef) GetSize() int64 {
+func (rr *PullCountRefFactoryMockRef) GetSize() int64 {
 	return 2000
 }
 
-func (rr *RemoteRefFactory2MockRef) Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error {
+func (rr *PullCountRefFactoryMockRef) Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error {
 	b := []byte(rr.id)[0]
 	buffer := make([]byte, len)
 	for i := 0; i < int(len); i++ {
 		buffer[i] = b
 	}
-	writer.Write(buffer)
+	_, err := writer.Write(buffer)
+	if err != nil {
+		return err
+	}
 	rr.owner.bytesRead += int(len)
 	return nil
 }
 
-func (rr *RemoteRefFactory2MockRef) GetSource() interface{} {
+func (rr *PullCountRefFactoryMockRef) GetSource() interface{} {
 	return rr.id
 }
 
-// func (rf)
+func (rf *PullCountRefFactoryMockRef) GetChildNodes(ctx context.Context) ([]*RemoteFile, error) {
+	panic("unimp")
+}
 
 func TestPartialReads(t *testing.T) {
 	require := require.New(t)
@@ -73,7 +75,7 @@ func TestPartialReads(t *testing.T) {
 	dir, err := ioutil.TempDir("", "test")
 	require.Nil(err)
 
-	rf := NewRemoteRefFactory2Mock()
+	rf := &PullCountRefFactoryMock{}
 
 	f := NewFreezer(dir, NewMemStore([][]byte{ChunkStat}), rf, 2)
 	BID := BlockID{2}

@@ -30,6 +30,7 @@ type RemoteRef interface {
 	GetSize() int64
 	Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error
 	GetSource() interface{}
+	GetChildNodes(ctx context.Context) ([]*RemoteFile, error)
 	// Release()
 }
 

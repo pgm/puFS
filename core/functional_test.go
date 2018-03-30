@@ -1,9 +1,8 @@
-// +build broken_test
-
 package core
 
 import (
 	"context"
+	"encoding/gob"
 	"io/ioutil"
 	"testing"
 
@@ -12,6 +11,7 @@ import (
 
 func TestFreezePush(t *testing.T) {
 	require := require.New(t)
+	gob.Register(BlockID{})
 	ctx := context.Background()
 
 	content := generateUniqueString()
@@ -20,7 +20,8 @@ func TestFreezePush(t *testing.T) {
 	require.Nil(err)
 
 	f := NewRemoteRefFactoryMem()
-	ds1 := NewDataStore(dir1, f, &RemoteRefFactory2Mock{}, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	f.objects["k"] = []byte{1}
+	ds1 := NewDataStore(dir1, f, NewMemRemoteRefFactory2(f), NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
 
 	aID := createFile(require, ds1, RootINode, "a", content)
 	err = ds1.Push(ctx, RootINode, "sample-label")
@@ -29,7 +30,7 @@ func TestFreezePush(t *testing.T) {
 
 	dir2, err := ioutil.TempDir("", "test")
 	require.Nil(err)
-	ds2 := NewDataStore(dir2, f, &RemoteRefFactory2Mock{}, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	ds2 := NewDataStore(dir2, f, NewMemRemoteRefFactory2(f), NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
 
 	err = ds2.MountByLabel(ctx, RootINode, "sample-label")
 	require.Nil(err)

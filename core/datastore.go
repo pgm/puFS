@@ -77,13 +77,15 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory, rrf2 Re
 	}
 
 	chunkSize := 100 * 1024
-	return &DataStore{path: storagePath,
+	ds := &DataStore{path: storagePath,
 		mountTablePath:    mountTablePath,
 		db:                NewINodeDB(1000, nodeKV),
 		writableStore:     NewWritableStore(writablePath),
 		remoteRefFactory2: rrf2,
 		freezer:           NewFreezer(freezerPath, freezerKV, rrf2, chunkSize),
 		remoteRefFactory:  remoteRefFactory}
+
+	return ds
 }
 
 func (d *DataStore) persistMountTable() {
@@ -355,7 +357,9 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 	}
 	if node.IsDir && node.IsDeferredChildFetch {
 		if node.BID != NABlock {
-			remoteRef := d.remoteRefFactory2.GetRef(node.RemoteSource)
+			remoteSource := d.remoteRefFactory.GetBlockSource(node.BID)
+
+			remoteRef := d.remoteRefFactory2.GetRef(remoteSource)
 			if err != nil {
 				return err
 			}
@@ -383,7 +387,11 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 				return err
 			}
 		} else {
-			nodes, err := d.remoteRefFactory.GetChildNodes(ctx, node)
+			if node.RemoteSource == nil {
+				panic("No BID set nor remote source")
+			}
+			remote := d.remoteRefFactory2.GetRef(node.RemoteSource)
+			nodes, err := remote.GetChildNodes(ctx)
 			if err != nil {
 				return err
 			}
@@ -852,7 +860,7 @@ func (d *DataStore) GetReadRef(ctx context.Context, inode INode) (Reader, error)
 	// fmt.Printf("Got ref: %s %s\n", ref, err)
 	if err == UnknownBlockID {
 		// do we have a remote to pull
-		err := d.pullIntoFreezer(ctx, node)
+		err = d.pullIntoFreezer(ctx, node)
 		if err != nil {
 			return nil, err
 		}
@@ -868,8 +876,13 @@ func (d *DataStore) GetReadRef(ctx context.Context, inode INode) (Reader, error)
 }
 
 func (d *DataStore) pullIntoFreezer(ctx context.Context, node *NodeRepr) error {
-	// fmt.Printf("Pulling %s/%s\n", node.Bucket, node.Key)
-	remote := d.remoteRefFactory2.GetRef(node.RemoteSource)
+	var remoteSource interface{}
+	if node.RemoteSource == nil {
+		remoteSource = d.remoteRefFactory.GetBlockSource(node.BID)
+	} else {
+		remoteSource = node.RemoteSource
+	}
+	remote := d.remoteRefFactory2.GetRef(remoteSource)
 	return d.freezer.AddBlock(ctx, node.BID, remote)
 }
 

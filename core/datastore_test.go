@@ -27,8 +27,9 @@ func createFile(require *require.Assertions, d *DataStore, parent INode, name st
 }
 
 func newDataStore(dir string) *DataStore {
-	rrf2 := &RemoteRefFactory2Mock{}
-	return NewDataStore(dir, nil, rrf2, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	repo := NewRemoteRefFactoryMem()
+	rrf2 := NewMemRemoteRefFactory2(repo)
+	return NewDataStore(dir, repo, rrf2, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
 }
 
 func testDataStore() *DataStore {
