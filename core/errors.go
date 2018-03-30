@@ -2,6 +2,7 @@ package core
 
 import "errors"
 
+var UnknownBlockID = errors.New("unknown block id")
 var INodesExhaustedErr = errors.New("INodes exhausted")
 var ParentMissingErr = errors.New("Parent does not exist")
 var NotDirErr = errors.New("Not a directory")

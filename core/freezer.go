@@ -352,6 +352,9 @@ func (f *FreezerImp) writeChunkInfo(BID BlockID, info *BlockInfo) error {
 func (f *FreezerImp) readChunkInfo(BID BlockID, tx RTx) (*BlockInfo, error) {
 	chunkStat := tx.RBucket(ChunkStat)
 	buffer := chunkStat.Get(BID[:])
+	if buffer == nil {
+		return nil, UnknownBlockID
+	}
 	dec := gob.NewDecoder(bytes.NewReader(buffer))
 	var info BlockInfo
 	err := dec.Decode(&info)

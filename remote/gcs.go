@@ -18,27 +18,25 @@ import (
 )
 
 type RemoteGCS struct {
-	Bucket     *storage.BucketHandle // has ref to client
-	Key        string
-	Generation int64
-	Size       int64
+	Owner  *RemoteRefFactoryImp
+	Source *core.GCSObjectSource
 }
 
 func (r *RemoteGCS) GetSize() int64 {
-	return r.Size
+	return r.Source.Size
 }
 
-func NewRemoteObject(client *storage.Client, bucketName string, key string) (*RemoteGCS, error) {
-	ctx := context.Background()
-	bucket := client.Bucket(bucketName)
-	objHandle := bucket.Object(key)
-	attr, err := objHandle.Attrs(ctx)
-	if err != nil {
-		return nil, err
-	}
+// func NewRemoteObject(client *storage.Client, bucketName string, key string) (*RemoteGCS, error) {
+// 	ctx := context.Background()
+// 	bucket := client.Bucket(bucketName)
+// 	objHandle := bucket.Object(key)
+// 	attr, err := objHandle.Attrs(ctx)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	return &RemoteGCS{Bucket: bucket, Key: key, Generation: attr.Generation, Size: attr.Size}, nil
-}
+// 	return &RemoteGCS{Bucket: bucket, Key: key, Generation: attr.Generation, Size: attr.Size}, nil
+// }
 
 type RemoteRefFactoryImp struct {
 	Bucket         string
@@ -48,9 +46,11 @@ type RemoteRefFactoryImp struct {
 	GCSClient      *storage.Client
 }
 
-func (rrf *RemoteRefFactoryImp) GetChildNodes(ctx context.Context, node *core.NodeRepr) ([]*core.RemoteFile, error) {
-	b := rrf.GCSClient.Bucket(node.Bucket)
-	it := b.Objects(ctx, &storage.Query{Delimiter: "/", Prefix: node.Key, Versions: false})
+func (rrf *RemoteRefFactoryImp) GetChildNodes(ctx context.Context, remoteSource interface{}) ([]*core.RemoteFile, error) {
+	gcsSource := remoteSource.(*core.GCSObjectSource)
+
+	b := rrf.GCSClient.Bucket(gcsSource.Bucket)
+	it := b.Objects(ctx, &storage.Query{Delimiter: "/", Prefix: gcsSource.Key, Versions: false})
 	result := make([]*core.RemoteFile, 0, 100)
 	for {
 		next, err := it.Next()
@@ -65,22 +65,24 @@ func (rrf *RemoteRefFactoryImp) GetChildNodes(ctx context.Context, node *core.No
 		if next.Prefix != "" {
 			// if we really want mtime we could get the mtime of the prefix because it's usually an empty object via
 			// an explicit attr fetch of the prefix
-			file = &core.RemoteFile{Name: next.Prefix[len(node.Key) : len(next.Prefix)-1],
-				IsDir:  true,
-				Bucket: node.Bucket,
-				Key:    next.Prefix}
+			file = &core.RemoteFile{Name: next.Prefix[len(gcsSource.Key) : len(next.Prefix)-1],
+				IsDir: true,
+				RemoteSource: &core.GCSObjectSource{
+					Bucket: gcsSource.Bucket,
+					Key:    next.Prefix}}
 		} else {
-			name := next.Name[len(node.Key):]
+			name := next.Name[len(gcsSource.Key):]
 			if name == "" {
 				continue
 			}
 			file = &core.RemoteFile{Name: name,
-				IsDir:      false,
-				Size:       next.Size,
-				ModTime:    next.Updated,
-				Bucket:     node.Bucket,
-				Key:        next.Name,
-				Generation: next.Generation}
+				IsDir:   false,
+				Size:    next.Size,
+				ModTime: next.Updated,
+				RemoteSource: &core.GCSObjectSource{
+					Bucket:     gcsSource.Bucket,
+					Key:        next.Name,
+					Generation: next.Generation}}
 		}
 
 		result = append(result, file)
@@ -192,21 +194,24 @@ func NewRemoteRefFactory(client *storage.Client, Bucket string, KeyPrefix string
 		LeaseKeyPrefix: KeyPrefix + "lease/"}
 }
 
-func (rrf *RemoteRefFactoryImp) GetRef(ctx context.Context, node *core.NodeRepr) (core.RemoteRef, error) {
-	var remote core.RemoteRef
+func (rf *RemoteRefFactoryImp) GetRef(source interface{}) core.RemoteRef {
+	// switch r := r.(type) {
+	// default:
+	// 	// Note: To FUSE, ENOSYS means "this server never implements this request."
+	// 	// It would be inappropriate to return ENOSYS for other operations in this
+	// 	// switch that might only be unavailable in some contexts, not all.
+	// 	return fuse.ENOSYS
 
-	if node.URL != "" {
-		remote = &RemoteURL{URL: node.URL, ETag: node.ETag, Length: node.Size}
-	} else {
-		if node.Key != "" {
-			CASBucketRef := rrf.GCSClient.Bucket(node.Bucket)
-			remote = &RemoteGCS{Bucket: CASBucketRef, Key: node.Key, Size: node.Size}
-		} else {
-			CASBucketRef := rrf.GCSClient.Bucket(rrf.Bucket)
-			remote = &RemoteGCS{Bucket: CASBucketRef, Key: core.GetBlockKey(rrf.CASKeyPrefix, node.BID), Size: node.Size}
-		}
+	// // Node operations.
+	// case *fuse.GetattrRequest:
+
+	switch source := source.(type) {
+	default:
+		panic("unknown type")
+
+	case *core.URLSource:
+		return &RemoteURL{Owner: rf}
+	case *core.GCSObjectSource:
+		return &RemoteGCS{Owner: rf, Source: source}
 	}
-	// fmt.Printf("remote=%v\n", remote)
-
-	return remote, nil
 }

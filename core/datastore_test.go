@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -240,23 +241,18 @@ func TestRmdir(t *testing.T) {
 // 	require.Equal(NoSuchNodeErr, err)
 // }
 
-func TestRemote(t *testing.T) {
-	url := "https://developer.mozilla.org/en-US/"
-	fmt.Printf("err\n")
-	require := require.New(t)
-	d := testDataStore()
-	ctx := context.Background()
+type NetworkClientImp struct {
+}
 
-	fileID, err := d.AddRemoteURL(ctx, RootINode, "remote", url)
-	require.Nil(err)
+func (n *NetworkClientImp) GetGCSAttr(ctx context.Context, bucket string, key string) (*GCSAttrs, error) {
+	panic("unimp")
+}
 
-	r, err := d.GetReadRef(ctx, fileID)
-	require.Nil(err)
+func (n *NetworkClientImp) GetHTTPAttr(ctx context.Context, url string) (*HTTPAttrs, error) {
+	resp, err := http.Head(url)
+	if err != nil {
+		return nil, err
+	}
 
-	buffer := make([]byte, 500)
-	_, err = r.Read(ctx, buffer)
-	require.Nil(err)
-
-	require.Equal("HTML", string(buffer))
-	fmt.Printf("%s", string(buffer))
+	return &HTTPAttrs{ETag: resp.Header.Get("etag"), Size: resp.ContentLength}, nil
 }

@@ -186,7 +186,8 @@ func (r *RemoteRefFactoryMem) GetRoot(ctx context.Context, name string) (BlockID
 }
 
 func (r *RemoteRefFactoryMem) GetChildNodes(ctx context.Context, node *NodeRepr) ([]*RemoteFile, error) {
-	prefix := node.Key + "/"
+	source := node.RemoteSource.(*GCSObjectSource)
+	prefix := source.Key + "/"
 	dirs := make(map[string]bool)
 	result := make([]*RemoteFile, 0, 100)
 	now := time.Now()
@@ -200,13 +201,14 @@ func (r *RemoteRefFactoryMem) GetChildNodes(ctx context.Context, node *NodeRepr)
 				dirs[name] = true
 			} else {
 				rec := &RemoteFile{
-					Name:       name,
-					IsDir:      false,
-					Size:       int64(len(value)),
-					ModTime:    now,
-					Bucket:     node.Bucket,
-					Key:        key,
-					Generation: 1}
+					Name:    name,
+					IsDir:   false,
+					Size:    int64(len(value)),
+					ModTime: now,
+					RemoteSource: &GCSObjectSource{
+						Bucket:     source.Bucket,
+						Key:        key,
+						Generation: 1}}
 				result = append(result, rec)
 			}
 		}
@@ -214,13 +216,15 @@ func (r *RemoteRefFactoryMem) GetChildNodes(ctx context.Context, node *NodeRepr)
 
 	for name, _ := range dirs {
 		rec := &RemoteFile{
-			Name:       name,
-			IsDir:      true,
-			Size:       0,
-			ModTime:    now,
-			Bucket:     node.Bucket,
-			Key:        node.Key + "/" + name,
-			Generation: 0}
+			Name:    name,
+			IsDir:   true,
+			Size:    0,
+			ModTime: now,
+			RemoteSource: &GCSObjectSource{
+				Bucket:     source.Bucket,
+				Key:        source.Key + "/" + name,
+				Generation: 0}}
+
 		result = append(result, rec)
 	}
 

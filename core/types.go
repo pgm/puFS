@@ -96,15 +96,12 @@ type GCSAttrs struct {
 	IsDir      bool
 }
 
-type GCSClient interface {
+type NetworkClient interface {
 	GetGCSAttr(ctx context.Context, bucket string, key string) (*GCSAttrs, error)
+	GetHTTPAttr(ctx context.Context, url string) (*HTTPAttrs, error)
 }
 
 type HTTPAttrs struct {
 	ETag string
 	Size int64
-}
-
-type HTTPClient interface {
-	GetHTTPAttr(ctx context.Context, url string) (*HTTPAttrs, error)
 }

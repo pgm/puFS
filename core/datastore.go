@@ -33,10 +33,10 @@ type DataStore struct {
 	writableStore     WriteableStore
 	remoteRefFactory  RemoteRefFactory
 	mounts            []*Mount
+
 	// locker        *INodeLocker
 
-	httpClient HTTPClient
-	gcsClient  GCSClient
+	networkClient NetworkClient
 }
 
 // default expiry is 48 hours
@@ -47,9 +47,8 @@ const STALE_LEASE_DURATION = 1 * time.Hour
 
 ///////////////////////////
 
-func (d *DataStore) SetClients(httpClient HTTPClient, gcsClient GCSClient) {
-	d.httpClient = httpClient
-	d.gcsClient = gcsClient
+func (d *DataStore) SetClients(networkClient NetworkClient) {
+	d.networkClient = networkClient
 }
 
 func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory, rrf2 RemoteRefFactory2, freezerKV KVStore, nodeKV KVStore) *DataStore {
@@ -416,7 +415,7 @@ func (d *DataStore) AddRemoteGCS(ctx context.Context, parent INode, name string,
 		return InvalidINode, err
 	}
 
-	attrs, err := d.gcsClient.GetGCSAttr(ctx, bucket, key)
+	attrs, err := d.networkClient.GetGCSAttr(ctx, bucket, key)
 	if err != nil {
 		return InvalidINode, err
 	}
@@ -549,7 +548,7 @@ func (d *DataStore) AddRemoteURL(ctx context.Context, parent INode, name string,
 		return InvalidINode, err
 	}
 
-	attrs, err := d.httpClient.GetHTTPAttr(ctx, URL)
+	attrs, err := d.networkClient.GetHTTPAttr(ctx, URL)
 	if err != nil {
 		return InvalidINode, err
 	}
@@ -851,7 +850,7 @@ func (d *DataStore) GetReadRef(ctx context.Context, inode INode) (Reader, error)
 	// fmt.Printf("Getting ref\n")
 	ref, err := d.freezer.GetRef(node.BID)
 	// fmt.Printf("Got ref: %s %s\n", ref, err)
-	if ref == nil && err == nil {
+	if err == UnknownBlockID {
 		// do we have a remote to pull
 		err := d.pullIntoFreezer(ctx, node)
 		if err != nil {

@@ -10,11 +10,13 @@ type GCSObjectSource struct {
 	Bucket     string
 	Key        string
 	Generation int64
+	Size       int64
 }
 
 type URLSource struct {
 	URL  string
 	ETag string
+	Size int64
 }
 
 type RemoteFile struct {

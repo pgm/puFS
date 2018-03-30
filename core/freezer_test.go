@@ -23,8 +23,27 @@ func NewRemoteRefFactory2Mock() *RemoteRefFactory2Mock {
 }
 
 func (rf *RemoteRefFactory2Mock) GetRef(source interface{}) RemoteRef {
-	s := source.(string)
-	return &RemoteRefFactory2MockRef{rf, s}
+	// switch r := r.(type) {
+	// default:
+	// 	// Note: To FUSE, ENOSYS means "this server never implements this request."
+	// 	// It would be inappropriate to return ENOSYS for other operations in this
+	// 	// switch that might only be unavailable in some contexts, not all.
+	// 	return fuse.ENOSYS
+
+	// // Node operations.
+	// case *fuse.GetattrRequest:
+
+	switch source := source.(type) {
+	default:
+		panic("unknown type")
+
+	case *string:
+		return &RemoteRefFactory2MockRef{rf, s}
+	case *URLSource:
+		return &URLRemoteRef{source.URL, source.ETag}
+	case *GCSObjectSource:
+		return &GCSRemoteRef{source.URL, source.ETag}
+	}
 }
 
 func (rr *RemoteRefFactory2MockRef) GetSize() int64 {

@@ -11,6 +11,7 @@ import (
 )
 
 type RemoteURL struct {
+	Owner         *RemoteRefFactoryImp
 	URL           string
 	ETag          string
 	Length        int64

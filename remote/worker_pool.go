@@ -35,11 +35,19 @@ type GetChildNodesResponse struct {
 type GCSPool struct {
 	serviceAccountFile string // "/Users/pmontgom/gcs-keys/gcs-test-b3b10d9077bb.json"
 	queue              chan interface{}
+	client *storage.Client
 }
 
 func NewGCSPool(serviceAccountFile string) *GCSPool {
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx, option.WithServiceAccountFile(p.serviceAccountFile))
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
+	}
+
 	return &GCSPool{serviceAccountFile: serviceAccountFile,
-		queue: make(chan interface{}, 10)}
+		queue: make(chan interface{}, 10),
+	client: client}
 }
 
 func (p *GCSPool) Pull(ctx context.Context, bucket string, key string, start int64, end int64, filename string) chan error {
@@ -120,7 +128,7 @@ func copyRegion(ctx context.Context, GCSClient *storage.Client, Bucket string, K
 	return nil
 }
 
-func (p *GCSPool) mainLoop(GCSClient *storage.Client) {
+func (p *GCSPool) mainLoop() {
 	for {
 		req, ok := <-p.queue
 		if !ok {
@@ -132,11 +140,11 @@ func (p *GCSPool) mainLoop(GCSClient *storage.Client) {
 			panic("unknown type")
 
 		case *CopyFromGCSRequest:
-			err := copyRegion(req.Ctx, GCSClient, req.Bucket, req.Key, 0, req.Start, req.End-req.Start, req.Filename)
+			err := copyRegion(req.Ctx, p.client, req.Bucket, req.Key, 0, req.Start, req.End-req.Start, req.Filename)
 			req.DoneChan <- err
 
 		case *GetChildNodesRequest:
-			files, err := getChildNodes(req.Ctx, GCSClient, req.Bucket, req.Key)
+			files, err := getChildNodes(req.Ctx, p.client, req.Bucket, req.Key)
 			req.DoneChan <- &GetChildNodesResponse{Err: err, Files: files}
 		}
 
@@ -146,11 +154,6 @@ func (p *GCSPool) mainLoop(GCSClient *storage.Client) {
 
 // create workers which sit in loop trying to read from pool or done channel
 func (p *GCSPool) AddWorker() {
-	ctx := context.Background()
-	client, err := storage.NewClient(ctx, option.WithServiceAccountFile(p.serviceAccountFile))
-	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
-	}
 
-	go p.mainLoop(client)
+	go p.mainLoop()
 }
