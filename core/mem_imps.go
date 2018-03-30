@@ -156,12 +156,12 @@ func (r *RemoteRefFactoryMem) GetRef(ctx context.Context, node *NodeRepr) (Remot
 }
 
 type FrozenReader struct {
-	ctx context.Context
-	fr  Reader
+	Ctx context.Context
+	Fr  Reader
 }
 
 func (fr *FrozenReader) Read(buffer []byte) (n int, err error) {
-	return fr.fr.Read(fr.ctx, buffer)
+	return fr.Fr.Read(fr.Ctx, buffer)
 }
 
 func (r *RemoteRefFactoryMem) Push(ctx context.Context, BID BlockID, fr FrozenRef) error {

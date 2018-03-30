@@ -1,34 +1,25 @@
 package remote
 
-import (
-	"context"
-	"encoding/gob"
-	"fmt"
-	"testing"
+// func TestURLRemote(t *testing.T) {
+// 	require := require.New(t)
 
-	"github.com/stretchr/testify/require"
-)
+// 	gob.Register(core.URLSource{})
+// 	url := "https://developer.mozilla.org/en-US/"
+// 	d := testDataStore()
+// 	d.SetClients(&NetworkClientImp{})
 
-func TestURLRemote(t *testing.T) {
-	require := require.New(t)
+// 	ctx := context.Background()
 
-	gob.Register(URLSource{})
-	url := "https://developer.mozilla.org/en-US/"
-	d := testDataStore()
-	d.SetClients(&NetworkClientImp{})
+// 	fileID, err := d.AddRemoteURL(ctx, RootINode, "remote", url)
+// 	require.Nil(err)
 
-	ctx := context.Background()
+// 	r, err := d.GetReadRef(ctx, fileID)
+// 	require.Nil(err)
 
-	fileID, err := d.AddRemoteURL(ctx, RootINode, "remote", url)
-	require.Nil(err)
+// 	buffer := make([]byte, 500)
+// 	_, err = r.Read(ctx, buffer)
+// 	require.Nil(err)
 
-	r, err := d.GetReadRef(ctx, fileID)
-	require.Nil(err)
-
-	buffer := make([]byte, 500)
-	_, err = r.Read(ctx, buffer)
-	require.Nil(err)
-
-	require.Equal("HTML", string(buffer))
-	fmt.Printf("%s", string(buffer))
-}
+// 	require.Equal("HTML", string(buffer))
+// 	fmt.Printf("%s", string(buffer))
+// }

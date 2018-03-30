@@ -2,6 +2,8 @@ package remote
 
 import (
 	"bytes"
+	"encoding/gob"
+	"io"
 	"io/ioutil"
 	"log"
 	"testing"
@@ -38,24 +40,41 @@ func TestListChildren(t *testing.T) {
 	client := testClient()
 
 	f := NewRemoteRefFactory(client, BucketName, "test/")
+	ref := f.GetRef(&core.GCSObjectSource{Bucket: BucketName, Key: "test-data/"})
 	ctx := context.Background()
-	files, err := f.GetChildNodes(ctx, &core.NodeRepr{Bucket: BucketName, Key: "test-data/"})
+	files, err := ref.GetChildNodes(ctx)
 	require.Nil(err)
 
 	require.Equal(4, len(files))
 	fileChecked := false
 	folderChecked := false
 	for _, f := range files {
+		s := f.RemoteSource.(*core.GCSObjectSource)
 		if f.Name == "file1" {
-			require.Equal("test-data/file1", f.Key)
+			require.Equal("test-data/file1", s.Key)
 			fileChecked = true
 		} else if f.Name == "folder1" {
-			require.Equal("test-data/folder1/", f.Key)
+			require.Equal("test-data/folder1/", s.Key)
 			folderChecked = true
 		}
 	}
 	require.True(fileChecked)
 	require.True(folderChecked)
+}
+
+type mockFrozenReader struct {
+	reader io.ReadSeeker
+}
+
+func (m *mockFrozenReader) Read(ctx context.Context, p []byte) (n int, err error) {
+	return m.reader.Read(p)
+}
+
+func (m *mockFrozenReader) Seek(offset int64, b int) (n int64, err error) {
+	return m.reader.Seek(offset, b)
+}
+
+func (m *mockFrozenReader) Release() {
 }
 
 func TestBlockPushPull(t *testing.T) {
@@ -70,7 +89,8 @@ func TestBlockPushPull(t *testing.T) {
 
 	BID := core.BlockID{1}
 	f := NewRemoteRefFactory(client, BucketName, "test/")
-	err := f.Push(ctx, BID, bytes.NewReader([]byte(body)))
+	mfr := &mockFrozenReader{bytes.NewReader([]byte(body))}
+	err := f.Push(ctx, BID, mfr)
 
 	r, err := o.NewReader(ctx)
 	require.Nil(err)
@@ -81,7 +101,8 @@ func TestBlockPushPull(t *testing.T) {
 	require.Equal(body, string(buffer))
 
 	bb := bytes.NewBuffer(make([]byte, 0, 100))
-	ref, err := f.GetRef(ctx, &core.NodeRepr{BID: BID, Size: int64(len(body))})
+	s := f.GetBlockSource(BID)
+	ref := f.GetRef(s)
 	require.Nil(err)
 	err = ref.Copy(ctx, 0, int64(len(body)), bb)
 	require.Nil(err)
@@ -115,6 +136,8 @@ func TestGCSClient(t *testing.T) {
 // }
 
 func TestDatastoreWithGCSRemote(t *testing.T) {
+	var x *core.GCSObjectSource
+	gob.Register(x)
 	require := require.New(t)
 	ctx := context.Background()
 	client, err := storage.NewClient(ctx, option.WithServiceAccountFile("/Users/pmontgom/gcs-keys/gcs-test-b3b10d9077bb.json"))
@@ -126,15 +149,15 @@ func TestDatastoreWithGCSRemote(t *testing.T) {
 	dir, err := ioutil.TempDir("", "gcs_test")
 	require.Nil(err)
 
-	ds := core.NewDataStore(dir, f, core.NewMemStore([][]byte{core.ChunkStat}), core.NewMemStore([][]byte{core.ChildNodeBucket, core.NodeBucket}))
-	ds.SetClients(f, f)
+	ds := core.NewDataStore(dir, f, f, core.NewMemStore([][]byte{core.ChunkStat}), core.NewMemStore([][]byte{core.ChildNodeBucket, core.NodeBucket}))
+	ds.SetClients(f)
 
 	inode, err := ds.AddRemoteGCS(ctx, core.RootINode, "gcs", bucketName, "sample")
 	r, err := ds.GetReadRef(ctx, inode)
 	require.Nil(err)
 
 	b := make([]byte, 100)
-	n, err := r.Read(b)
+	n, err := r.Read(ctx, b)
 	require.Equal(5, n)
 	require.Equal("hello", string(b[:n]))
 
@@ -158,13 +181,15 @@ func newFullDataStore() *core.DataStore {
 		panic(err)
 	}
 
-	ds := core.NewDataStore(dir, f, core.NewMemStore([][]byte{core.ChunkStat}), core.NewMemStore([][]byte{core.ChildNodeBucket, core.NodeBucket}))
-	ds.SetClients(f, f)
+	ds := core.NewDataStore(dir, f, f, core.NewMemStore([][]byte{core.ChunkStat}), core.NewMemStore([][]byte{core.ChildNodeBucket, core.NodeBucket}))
+	ds.SetClients(f)
 
 	return ds
 }
 
 func TestMount(t *testing.T) {
+	var x *core.GCSObjectSource
+	gob.Register(x)
 	require := require.New(t)
 	ctx := context.Background()
 
@@ -197,13 +222,15 @@ func TestMount(t *testing.T) {
 	r, err := ds2.GetReadRef(ctx, fileID2)
 	require.Nil(err)
 
-	buffer, err := ioutil.ReadAll(r)
+	buffer, err := ioutil.ReadAll(&core.FrozenReader{ctx, r})
 	require.Nil(err)
 
 	require.Equal(body, string(buffer))
 }
 
 func TestImportPublicData(t *testing.T) {
+	var x *core.GCSObjectSource
+	gob.Register(x)
 	require := require.New(t)
 
 	ds := newFullDataStore()

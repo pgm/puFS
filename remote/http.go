@@ -10,27 +10,24 @@ import (
 	"golang.org/x/net/context"
 )
 
-type RemoteURL struct {
-	Owner         *RemoteRefFactoryImp
-	URL           string
-	ETag          string
-	Length        int64
-	AcceptsRanges bool
+type URLRef struct {
+	Owner  *RemoteRefFactoryImp
+	Source *core.URLSource
 }
 
-func (r *RemoteURL) GetSize() int64 {
-	return r.Length
+func (r *URLRef) GetSize() int64 {
+	return r.Source.Size
 }
 
-func (r *RemoteURL) Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error {
-	req, err := http.NewRequest("GET", r.URL, nil)
+func (r *URLRef) Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error {
+	req, err := http.NewRequest("GET", r.Source.URL, nil)
 	req.Header.Add("If-Match", `"r.ETag"`)
-	if offset != 0 || len != r.Length {
-		if r.AcceptsRanges {
-			req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+len-1))
-		} else {
-			return errors.New("server does not accept ranges")
-		}
+	if offset != 0 || len != r.Source.Size {
+		// if r.Source.AcceptsRanges {
+		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+len-1))
+		// } else {
+		// 	return errors.New("server does not accept ranges")
+		// }
 	}
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -47,10 +44,18 @@ func (r *RemoteURL) Copy(ctx context.Context, offset int64, len int64, writer io
 	}
 
 	if n != len {
-		return errors.New("Did not copy full requested length")
+		return errors.New("Did not copy requested length")
 	}
 
 	return nil
+}
+
+func (r *URLRef) GetSource() interface{} {
+	return r.Source
+}
+
+func (r *URLRef) GetChildNodes(ctx context.Context) ([]*core.RemoteFile, error) {
+	panic("unimp")
 }
 
 func (rrf *RemoteRefFactoryImp) GetHTTPAttr(ctx context.Context, url string) (*core.HTTPAttrs, error) {

@@ -3,18 +3,18 @@ package remote
 import (
 	"encoding/base64"
 	"encoding/gob"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"strings"
 	"time"
-
-	"google.golang.org/api/iterator"
 
 	// Imports the Google Cloud Storage client package.
 
 	"cloud.google.com/go/storage"
 	"github.com/pgm/sply2/core"
 	"golang.org/x/net/context"
+	"google.golang.org/api/iterator"
 )
 
 type RemoteGCS struct {
@@ -46,50 +46,50 @@ type RemoteRefFactoryImp struct {
 	GCSClient      *storage.Client
 }
 
-func (rrf *RemoteRefFactoryImp) GetChildNodes(ctx context.Context, remoteSource interface{}) ([]*core.RemoteFile, error) {
-	gcsSource := remoteSource.(*core.GCSObjectSource)
+// func (rrf *RemoteRefFactoryImp) GetChildNodes(ctx context.Context, remoteSource interface{}) ([]*core.RemoteFile, error) {
+// 	gcsSource := remoteSource.(*core.GCSObjectSource)
 
-	b := rrf.GCSClient.Bucket(gcsSource.Bucket)
-	it := b.Objects(ctx, &storage.Query{Delimiter: "/", Prefix: gcsSource.Key, Versions: false})
-	result := make([]*core.RemoteFile, 0, 100)
-	for {
-		next, err := it.Next()
-		if err == iterator.Done {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
+// 	b := rrf.GCSClient.Bucket(gcsSource.Bucket)
+// 	it := b.Objects(ctx, &storage.Query{Delimiter: "/", Prefix: gcsSource.Key, Versions: false})
+// 	result := make([]*core.RemoteFile, 0, 100)
+// 	for {
+// 		next, err := it.Next()
+// 		if err == iterator.Done {
+// 			break
+// 		}
+// 		if err != nil {
+// 			return nil, err
+// 		}
 
-		var file *core.RemoteFile
-		if next.Prefix != "" {
-			// if we really want mtime we could get the mtime of the prefix because it's usually an empty object via
-			// an explicit attr fetch of the prefix
-			file = &core.RemoteFile{Name: next.Prefix[len(gcsSource.Key) : len(next.Prefix)-1],
-				IsDir: true,
-				RemoteSource: &core.GCSObjectSource{
-					Bucket: gcsSource.Bucket,
-					Key:    next.Prefix}}
-		} else {
-			name := next.Name[len(gcsSource.Key):]
-			if name == "" {
-				continue
-			}
-			file = &core.RemoteFile{Name: name,
-				IsDir:   false,
-				Size:    next.Size,
-				ModTime: next.Updated,
-				RemoteSource: &core.GCSObjectSource{
-					Bucket:     gcsSource.Bucket,
-					Key:        next.Name,
-					Generation: next.Generation}}
-		}
+// 		var file *core.RemoteFile
+// 		if next.Prefix != "" {
+// 			// if we really want mtime we could get the mtime of the prefix because it's usually an empty object via
+// 			// an explicit attr fetch of the prefix
+// 			file = &core.RemoteFile{Name: next.Prefix[len(gcsSource.Key) : len(next.Prefix)-1],
+// 				IsDir: true,
+// 				RemoteSource: &core.GCSObjectSource{
+// 					Bucket: gcsSource.Bucket,
+// 					Key:    next.Prefix}}
+// 		} else {
+// 			name := next.Name[len(gcsSource.Key):]
+// 			if name == "" {
+// 				continue
+// 			}
+// 			file = &core.RemoteFile{Name: name,
+// 				IsDir:   false,
+// 				Size:    next.Size,
+// 				ModTime: next.Updated,
+// 				RemoteSource: &core.GCSObjectSource{
+// 					Bucket:     gcsSource.Bucket,
+// 					Key:        next.Name,
+// 					Generation: next.Generation}}
+// 		}
 
-		result = append(result, file)
-	}
+// 		result = append(result, file)
+// 	}
 
-	return result, nil
-}
+// 	return result, nil
+// }
 
 type Lease struct {
 	Expiry time.Time
@@ -165,7 +165,11 @@ func (rrf *RemoteRefFactoryImp) GetGCSAttr(ctx context.Context, bucket string, k
 	return &core.GCSAttrs{Generation: attrs.Generation, IsDir: false, ModTime: attrs.Updated, Size: attrs.Size}, nil
 }
 
-func (rrf *RemoteRefFactoryImp) Push(ctx context.Context, BID core.BlockID, rr io.Reader) error {
+func (rrf *RemoteRefFactoryImp) GetBlockSource(BID core.BlockID) interface{} {
+	return &core.GCSObjectSource{Bucket: rrf.Bucket, Key: core.GetBlockKey(rrf.CASKeyPrefix, BID)}
+}
+
+func (rrf *RemoteRefFactoryImp) Push(ctx context.Context, BID core.BlockID, rr core.FrozenRef) error {
 	// upload only if generation == 0, which means this upload will fail if any object exists with the key
 	// TODO: need to add a check for that case
 	key := core.GetBlockKey(rrf.CASKeyPrefix, BID)
@@ -175,7 +179,7 @@ func (rrf *RemoteRefFactoryImp) Push(ctx context.Context, BID core.BlockID, rr i
 	writer := objHandle.NewWriter(ctx)
 	defer writer.Close()
 
-	_, err := io.Copy(writer, rr)
+	_, err := io.Copy(writer, &core.FrozenReader{ctx, rr})
 	if err != nil {
 		return err
 	}
@@ -194,6 +198,27 @@ func NewRemoteRefFactory(client *storage.Client, Bucket string, KeyPrefix string
 		LeaseKeyPrefix: KeyPrefix + "lease/"}
 }
 
+type GCSRef struct {
+	Owner  *RemoteRefFactoryImp
+	Source *core.GCSObjectSource
+}
+
+func (r *GCSRef) GetSize() int64 {
+	return r.Source.Size
+}
+
+func (r *GCSRef) Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error {
+	return copyRegion(ctx, r.Owner.GCSClient, r.Source.Bucket, r.Source.Key, r.Source.Generation, offset, len, writer)
+}
+
+func (r *GCSRef) GetSource() interface{} {
+	return r.Source
+}
+
+func (r *GCSRef) GetChildNodes(ctx context.Context) ([]*core.RemoteFile, error) {
+	return getChildNodes(ctx, r.Owner.GCSClient, r.Source.Bucket, r.Source.Key)
+}
+
 func (rf *RemoteRefFactoryImp) GetRef(source interface{}) core.RemoteRef {
 	// switch r := r.(type) {
 	// default:
@@ -207,11 +232,84 @@ func (rf *RemoteRefFactoryImp) GetRef(source interface{}) core.RemoteRef {
 
 	switch source := source.(type) {
 	default:
-		panic("unknown type")
+		panic(fmt.Sprintf("unknown type: %v", source))
 
 	case *core.URLSource:
-		return &RemoteURL{Owner: rf}
+		return &URLRef{Owner: rf, Source: source}
 	case *core.GCSObjectSource:
-		return &RemoteGCS{Owner: rf, Source: source}
+		return &GCSRef{Owner: rf, Source: source}
 	}
+}
+
+func getChildNodes(ctx context.Context, GCSClient *storage.Client, Bucket string, Key string) ([]*core.RemoteFile, error) {
+	b := GCSClient.Bucket(Bucket)
+	it := b.Objects(ctx, &storage.Query{Delimiter: "/", Prefix: Key, Versions: false})
+	result := make([]*core.RemoteFile, 0, 100)
+	for {
+		next, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		var file *core.RemoteFile
+		if next.Prefix != "" {
+			// if we really want mtime we could get the mtime of the prefix because it's usually an empty object via
+			// an explicit attr fetch of the prefix
+			file = &core.RemoteFile{Name: next.Prefix[len(Key) : len(next.Prefix)-1],
+				IsDir: true,
+				RemoteSource: &core.GCSObjectSource{
+					Bucket: Bucket,
+					Key:    next.Prefix}}
+		} else {
+			name := next.Name[len(Key):]
+			if name == "" {
+				continue
+			}
+			file = &core.RemoteFile{Name: name,
+				IsDir:   false,
+				Size:    next.Size,
+				ModTime: next.Updated,
+				RemoteSource: &core.GCSObjectSource{Bucket: Bucket,
+					Key:        next.Name,
+					Generation: next.Generation}}
+		}
+
+		result = append(result, file)
+	}
+
+	return result, nil
+}
+
+func copyRegion(ctx context.Context, GCSClient *storage.Client, Bucket string, Key string, Generation int64, offset int64, len int64, writer io.Writer) error {
+	b := GCSClient.Bucket(Bucket)
+	objHandle := b.Object(Key)
+	if Generation != 0 {
+		objHandle = objHandle.If(storage.Conditions{GenerationMatch: Generation})
+	}
+
+	var reader io.ReadCloser
+	var err error
+	// if offset != 0 || len != r.Size {
+	reader, err = objHandle.NewRangeReader(ctx, offset, len)
+	// } else {
+	// 	reader, err = objHandle.NewReader(ctx)
+	// }
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+
+	n, err := io.Copy(writer, reader)
+	if err != nil {
+		return err
+	}
+
+	if len >= 0 && n != len {
+		return fmt.Errorf("Expected to copy to copy %d bytes but copied %d", len, n)
+	}
+
+	return nil
 }
