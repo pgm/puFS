@@ -37,10 +37,15 @@ type BlockInfo struct {
 }
 
 func (w *FrozenRefImp) Seek(offset int64, whence int) (int64, error) {
-	if whence != 0 {
-		panic("unimp")
+	if whence == os.SEEK_SET {
+		w.offset = offset
+	} else if whence == os.SEEK_CUR {
+		w.offset += offset
+	} else if whence == os.SEEK_END {
+		w.offset = w.size + offset
+	} else {
+		panic("unknown value of whence")
 	}
-	w.offset = offset
 	return w.offset, nil
 }
 
@@ -178,6 +183,10 @@ func (f *FreezerImp) getRemote(BID BlockID) (RemoteRef, error) {
 	return f.refFactory.GetRef(source), nil
 }
 func (f *FreezerImp) GetRef(BID BlockID) (FrozenRef, error) {
+	if BID == NABlock {
+		panic("Cannot get ref for NA block")
+	}
+
 	filename := f.getPath(BID)
 	remote, err := f.getRemote(BID)
 	if err != nil {
@@ -365,6 +374,10 @@ func (f *FreezerImp) readChunkInfo(BID BlockID, tx RTx) (*BlockInfo, error) {
 }
 
 func (f *FreezerImp) IsPushed(BID BlockID) (bool, error) {
+	if BID == NABlock {
+		panic("Asked if NA block was pushed")
+	}
+
 	var pushed bool
 	var err error
 	err = f.db.View(func(tx RTx) error {
@@ -419,6 +432,9 @@ func (f *FreezerImp) AddFile(path string) (*NewBlock, error) {
 }
 
 func (f *FreezerImp) AddBlock(ctx context.Context, BID BlockID, remoteRef RemoteRef) error {
+	if BID == NABlock {
+		panic("Attempted to add NA block")
+	}
 	hasChunk, err := f.hasChunk(BID)
 	if err != nil {
 		return err

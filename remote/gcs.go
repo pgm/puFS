@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/gob"
 	"fmt"
@@ -246,6 +247,12 @@ func (rf *RemoteRefFactoryImp) GetRef(source interface{}) core.RemoteRef {
 	}
 }
 
+func randomBlockID() core.BlockID {
+	var BID core.BlockID
+	rand.Read(BID[:])
+	return BID
+}
+
 func getChildNodes(ctx context.Context, GCSClient *storage.Client, Bucket string, Key string) ([]*core.RemoteFile, error) {
 	b := GCSClient.Bucket(Bucket)
 	it := b.Objects(ctx, &storage.Query{Delimiter: "/", Prefix: Key, Versions: false})
@@ -277,6 +284,7 @@ func getChildNodes(ctx context.Context, GCSClient *storage.Client, Bucket string
 				IsDir:   false,
 				Size:    next.Size,
 				ModTime: next.Updated,
+				BID:     randomBlockID(), // not computed based on content. Useful to be able to reuse freezer without colliding any real content
 				RemoteSource: &core.GCSObjectSource{Bucket: Bucket,
 					Key:        next.Name,
 					Generation: next.Generation,

@@ -24,6 +24,7 @@ type RemoteFile struct {
 	IsDir   bool
 	Size    int64
 	ModTime time.Time
+	BID     BlockID
 
 	RemoteSource interface{}
 }

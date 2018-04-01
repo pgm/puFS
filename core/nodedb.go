@@ -321,6 +321,7 @@ func (db *INodeDB) addRemoteLazyChildren(tx RWTx, parent INode, children []*Remo
 			IsDir:                child.IsDir,
 			Size:                 child.Size,
 			ModTime:              child.ModTime,
+			BID:                  child.BID,
 			RemoteSource:         child.RemoteSource,
 			IsDeferredChildFetch: child.IsDir})
 		if err != nil {

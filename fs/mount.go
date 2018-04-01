@@ -6,7 +6,9 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/user"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -206,14 +208,31 @@ func (c *Server) serve(r fuse.Request) error {
 }
 
 func New(c *fuse.Conn, ds *core.DataStore) *Server {
+	user, err := user.Current()
+	if err != nil {
+		panic("Could not determine current user")
+	}
+	defaultUID, err := strconv.ParseUint(user.Uid, 10, 32)
+	if err != nil {
+		panic("Could not determine UID")
+	}
+	defaultGID, err := strconv.ParseUint(user.Gid, 10, 32)
+	if err != nil {
+		panic("Could not determine GID")
+	}
 	return &Server{conn: c, ds: ds, reqs: make(map[fuse.RequestID]*sRequest),
-		handles:      make(map[fuse.HandleID]*sHandle),
-		lastHandleID: 1,
-		maxHandles:   100}
+		handles:        make(map[fuse.HandleID]*sHandle),
+		lastHandleID:   1,
+		maxHandles:     100,
+		defaultUserID:  uint32(defaultUID),
+		defaultGroupID: uint32(defaultGID)}
 }
 
 type Server struct {
 	conn *fuse.Conn
+
+	defaultUserID  uint32
+	defaultGroupID uint32
 
 	// state, protected by meta
 	meta         sync.Mutex
@@ -519,13 +538,13 @@ func (c *Server) getattr(ctx context.Context, inode core.INode, attr *fuse.Attr)
 	attr.Ctime = nattr.ModTime              // time of last inode change
 	attr.Crtime = nattr.ModTime             // time of creation (OS X only)
 	if nattr.IsDir {
-		attr.Mode = 0777 | os.ModeDir // file mode
+		attr.Mode = 0775 | os.ModeDir // file mode
 	} else {
-		attr.Mode = 0777 // file mode
+		attr.Mode = 0664 // file mode
 	}
-	attr.Nlink = 1 // number of links (usually 1)
-	// resp.Attr.Uid = 0      // owner uid
-	// resp.Attr.Gid = 0     // group gid
+	attr.Nlink = 1              // number of links (usually 1)
+	attr.Uid = c.defaultUserID  // owner uid
+	attr.Gid = c.defaultGroupID // group gid
 	// resp.Attr.Rdev = 0     // device numbers
 	// resp.Attr.Flags     uint32      // chflags(2) flags (OS X only)
 	attr.BlockSize = 4 * 1024 // preferred blocksize for filesystem I/O. I don't know the implication of setting this

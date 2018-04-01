@@ -166,14 +166,11 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 	} else if statementType == TailStatement {
 		inode, err = e.getINode(ctx, match[1])
 		if err == nil {
-			var attr *core.NodeRepr
-			attr, err = e.ds.GetAttr(ctx, inode)
-
 			var r core.Reader
 			r, err = e.ds.GetReadRef(ctx, inode)
 			if err == nil {
 				b := make([]byte, 100)
-				r.Seek(attr.Size-100, 0)
+				r.Seek(-100, os.SEEK_END)
 				_, err = r.Read(ctx, b)
 				if err == nil {
 					fmt.Println(string(b))

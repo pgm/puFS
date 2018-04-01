@@ -47,6 +47,8 @@ func generateUniqueString() string {
 }
 
 func TestListChildren(t *testing.T) {
+	needsServiceFile(t)
+
 	require := require.New(t)
 	client := testClient(t)
 
@@ -89,6 +91,8 @@ func (m *mockFrozenReader) Release() {
 }
 
 func TestBlockPushPull(t *testing.T) {
+	needsServiceFile(t)
+
 	require := require.New(t)
 	client := testClient(t)
 
@@ -123,6 +127,8 @@ func TestBlockPushPull(t *testing.T) {
 }
 
 func TestGCSClient(t *testing.T) {
+	needsServiceFile(t)
+
 	require := require.New(t)
 	client := testClient(t)
 
@@ -204,20 +210,40 @@ func newFullDataStore() *core.DataStore {
 }
 
 func TestImportPublicData(t *testing.T) {
+	needsServiceFile(t)
+
 	var x *core.GCSObjectSource
 	gob.Register(x)
 	require := require.New(t)
 
 	ds := newFullDataStore()
 	ctx := context.Background()
-	inode, err := ds.AddRemoteGCS(ctx, core.RootINode, "gcs", "gcp-public-data-sentinel-2", "/")
+	inode, err := ds.AddRemoteGCS(ctx, core.RootINode, "gcs", "gcp-public-data-sentinel-2", "")
 	require.Nil(err)
 
 	entries, err := ds.GetDirContents(ctx, inode)
-	require.True(len(entries) > 1)
+	require.True(len(entries) > 3)
+
+	fileInode, err := ds.GetNodeID(ctx, inode, "index.csv.gz")
+	require.Nil(err)
+
+	ref, err := ds.GetReadRef(ctx, fileInode)
+	require.Nil(err)
+
+	buffer := make([]byte, 100)
+	offset, err := ref.Seek(-100, os.SEEK_END)
+	require.True(offset > 0)
+	require.Nil(err)
+
+	n, err := ref.Read(ctx, buffer)
+	require.Nil(err)
+	require.Equal(100, n)
+
 }
 
 func TestMount(t *testing.T) {
+	needsServiceFile(t)
+
 	var x *core.GCSObjectSource
 	gob.Register(x)
 	require := require.New(t)
