@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/gob"
 	"io"
 	"io/ioutil"
 	"log"
@@ -30,6 +31,8 @@ var MkdirStatement *regexp.Regexp = regexp.MustCompile("^mkdir ([^ ]+)$")
 var UnlinkStatement *regexp.Regexp = regexp.MustCompile("^rm ([^ ]+)$")
 var WriteStatement *regexp.Regexp = regexp.MustCompile("^touch ([^ ]+)$")
 var ReadStatement *regexp.Regexp = regexp.MustCompile("^cat ([^ ]+)$")
+var HeadStatement *regexp.Regexp = regexp.MustCompile("^head ([^ ]+)$")
+var TailStatement *regexp.Regexp = regexp.MustCompile("^tail ([^ ]+)$")
 var ListStatement *regexp.Regexp = regexp.MustCompile("^ls\\s*([^ ]*)$")
 var FreezeStatement *regexp.Regexp = regexp.MustCompile("^freeze ([^ ]+)$")
 var PushStatement *regexp.Regexp = regexp.MustCompile("^push ([^ ]+) ([^ ]+)$")
@@ -45,7 +48,11 @@ var StatementExps []*regexp.Regexp = []*regexp.Regexp{
 	WriteStatement,
 	ReadStatement,
 	ListStatement,
-	FreezeStatement, PushStatement, MountStatement, UnmountStatement, BlankStatement,
+	FreezeStatement,
+	PushStatement, MountStatement, UnmountStatement,
+	BlankStatement,
+	HeadStatement,
+	TailStatement,
 	RenameStatement}
 
 var ParseError error = errors.New("Parse error")
@@ -53,6 +60,12 @@ var ParseError error = errors.New("Parse error")
 type Execution struct {
 	ds  *core.DataStore
 	cwd string
+}
+
+func GobRegisterTypes() {
+	var x *core.GCSObjectSource
+	gob.Register(core.BlockID{})
+	gob.Register(x)
 }
 
 func (e *Execution) splitPath(ctx context.Context, relPath string) (core.INode, string, error) {
@@ -135,6 +148,36 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 				_, err = e.ds.AddRemoteGCS(ctx, parent, name, bucket, key)
 			} else {
 				_, err = e.ds.AddRemoteURL(ctx, parent, name, url)
+			}
+		}
+	} else if statementType == HeadStatement {
+		inode, err = e.getINode(ctx, match[1])
+		if err == nil {
+			var r core.Reader
+			r, err = e.ds.GetReadRef(ctx, inode)
+			if err == nil {
+				b := make([]byte, 100)
+				_, err = r.Read(ctx, b)
+				if err == nil {
+					fmt.Println(string(b))
+				}
+			}
+		}
+	} else if statementType == TailStatement {
+		inode, err = e.getINode(ctx, match[1])
+		if err == nil {
+			var attr *core.NodeRepr
+			attr, err = e.ds.GetAttr(ctx, inode)
+
+			var r core.Reader
+			r, err = e.ds.GetReadRef(ctx, inode)
+			if err == nil {
+				b := make([]byte, 100)
+				r.Seek(attr.Size-100, 0)
+				_, err = r.Read(ctx, b)
+				if err == nil {
+					fmt.Println(string(b))
+				}
 			}
 		}
 	} else if statementType == ReadStatement {
@@ -226,7 +269,7 @@ func NewDataStore(dir string) *Execution {
 	//	projectID := "gcs-test-1136"
 
 	// Creates a client.
-	client, err := storage.NewClient(ctx, option.WithServiceAccountFile("/Users/pmontgom/gcs-keys/gcs-test-b3b10d9077bb.json"))
+	client, err := storage.NewClient(ctx, option.WithServiceAccountFile(""))
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
@@ -237,6 +280,7 @@ func NewDataStore(dir string) *Execution {
 	// }
 	ds := core.NewDataStore(dir, f, f, sply2.NewBoltDB(path.Join(dir, "freezer.db"), [][]byte{core.ChunkStat}),
 		sply2.NewBoltDB(path.Join(dir, "nodes.db"), [][]byte{core.ChildNodeBucket, core.NodeBucket}))
+	ds.SetClients(f)
 	return &Execution{ds: ds, cwd: "/"}
 }
 
@@ -256,6 +300,7 @@ func (e *Execution) executeLine(line string) {
 
 func main() {
 	dir := os.Args[1]
+	GobRegisterTypes()
 	e := NewDataStore(dir)
 
 	l, err := readline.NewEx(&readline.Config{

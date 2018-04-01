@@ -77,7 +77,7 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory, rrf2 Re
 		}
 	}
 
-	chunkSize := 100 * 1024
+	chunkSize := 100
 	ds := &DataStore{path: storagePath,
 		mountTablePath:    mountTablePath,
 		db:                NewINodeDB(1000, nodeKV),
@@ -606,6 +606,10 @@ func (d *DataStore) CreateWritable(ctx context.Context, parent INode, name strin
 		err = d.loadLazyChildren(ctx, tx, parent)
 		if err != nil {
 			return err
+		}
+
+		if d.db.NodeExists(tx, parent, name) {
+			return ExistsErr
 		}
 
 		filename, err = d.writableStore.NewFile()

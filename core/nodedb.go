@@ -82,7 +82,7 @@ func getNodeRepr(tx RTx, id INode) (*NodeRepr, error) {
 	value := nb.Get(idBytes)
 
 	if value == nil {
-		panic(fmt.Sprintf("Could not find node with ID %d", int(id)))
+		return nil, NoSuchNodeErr
 	}
 
 	return bytesToNode(value), nil
@@ -368,6 +368,10 @@ func (db *INodeDB) AddDir(tx RWTx, parent INode, name string) (INode, error) {
 		return InvalidINode, err
 	}
 
+	if db.NodeExists(tx, parent, name) {
+		return InvalidINode, ExistsErr
+	}
+
 	id, err := db.getNextFreeInode(tx)
 	if err != nil {
 		return InvalidINode, err
@@ -377,6 +381,7 @@ func (db *INodeDB) AddDir(tx RWTx, parent INode, name string) (INode, error) {
 	if err != nil {
 		return InvalidINode, err
 	}
+
 	err = addChild(tx, parent, id, name)
 	if err != nil {
 		return InvalidINode, err
@@ -428,6 +433,14 @@ func (db *INodeDB) GetNode(tx RTx, parent INode, name string) (*NodeRepr, error)
 	}
 
 	return getNodeRepr(tx, id)
+}
+
+func (db *INodeDB) NodeExists(tx RTx, parent INode, name string) bool {
+	key := makeChildKey(parent, name)
+	cn := tx.RBucket(ChildNodeBucket)
+
+	value := cn.Get(key)
+	return value != nil
 }
 
 func (db *INodeDB) GetNodeID(tx RTx, parent INode, name string) (INode, error) {

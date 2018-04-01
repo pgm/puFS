@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
@@ -45,6 +44,12 @@ func Mount(dir string, ds *core.DataStore) {
 			s.meta.Unlock()
 		}()
 	}
+
+	// wait until all go routines have completed before exiting
+	s.wg.Wait()
+
+	// shut it down
+	s.ds.Close()
 }
 
 type sRequest struct {
@@ -226,30 +231,78 @@ type Server struct {
 type sHandle struct {
 	inode    core.INode
 	readData []byte
+	ref      interface{}
 }
 
 func (h *sHandle) Read(ctx context.Context, req *fuse.ReadRequest, res *fuse.ReadResponse) error {
-	panic("unimp")
+	if h.ref == nil {
+		return fuse.EIO
+	}
+
+	reader, ok := h.ref.(core.Reader)
+	if !ok {
+		return fuse.EIO
+	}
+
+	_, err := reader.Seek(req.Offset, 0)
+	if err != nil {
+		return err
+	}
+
+	n, err := reader.Read(ctx, res.Data[:req.Size])
+	if err != nil {
+		return err
+	}
+
+	res.Data = res.Data[:n]
 	return nil
 }
 
-func (c *Server) splitPath(ctx context.Context, fullPath string) (core.INode, string, error) {
-	var err error
-
-	if fullPath == "" {
-		return core.RootINode, ".", nil
+func (h *sHandle) Write(ctx context.Context, req *fuse.WriteRequest, res *fuse.WriteResponse) error {
+	if h.ref == nil {
+		return fuse.EIO
 	}
 
-	components := strings.Split(fullPath[1:], "/")
-	parent := core.INode(core.RootINode)
-	for _, component := range components[0 : len(components)-1] {
-		parent, err = c.ds.GetNodeID(ctx, parent, component)
-		if err != nil {
-			return core.InvalidINode, "", err
-		}
+	writer, ok := h.ref.(core.WritableRef)
+	if !ok {
+		return fuse.EIO
 	}
-	return parent, components[len(components)-1], nil
+
+	_, err := writer.Seek(req.Offset, 0)
+	if err != nil {
+		return err
+	}
+
+	n, err := writer.Write(req.Data)
+	if err != nil {
+		return err
+	}
+
+	res.Size = n
+	return nil
 }
+
+func (h *sHandle) Release() error {
+	return nil
+}
+
+// func (c *Server) splitPath(ctx context.Context, fullPath string) (core.INode, string, error) {
+// 	var err error
+
+// 	if fullPath == "" {
+// 		return core.RootINode, ".", nil
+// 	}
+
+// 	components := strings.Split(fullPath[1:], "/")
+// 	parent := core.INode(core.RootINode)
+// 	for _, component := range components[0 : len(components)-1] {
+// 		parent, err = c.ds.GetNodeID(ctx, parent, component)
+// 		if err != nil {
+// 			return core.InvalidINode, "", err
+// 		}
+// 	}
+// 	return parent, components[len(components)-1], nil
+// }
 
 // func (c *Server) getINode(ctx context.Context, relPath string) (core.INode, error) {
 // 	parent, name, err := c.splitPath(ctx, relPath)
@@ -439,8 +492,12 @@ func (c *Server) Getattr(ctx context.Context, req *fuse.GetattrRequest, res *fus
 	return nil
 }
 
-func (c *Server) Remove(ctx context.Context, r *fuse.RemoveRequest) error {
-	panic("unimp")
+func (c *Server) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
+	err := c.ds.Remove(ctx, core.INode(req.Node), req.Name)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *Server) Access(ctx context.Context, r *fuse.AccessRequest) error {
@@ -553,24 +610,60 @@ func (c *Server) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.Open
 		res.Handle = fuse.HandleID(hID)
 		return nil
 	}
+	// opening a regular file
 
 	return fuse.EPERM
 	// return nil
+}
+
+func (c *Server) bindHandle(obj interface{}) fuse.HandleID {
+	newSHandle := &sHandle{ref: obj}
+
+	c.meta.Lock()
+	defer c.meta.Unlock()
+	handle := c.lastHandleID + 1
+	firstTryHandle := handle
+	for {
+		existing := c.handles[fuse.HandleID(c.lastHandleID)]
+		if existing == nil {
+			break
+		}
+		c.lastHandleID++
+		if firstTryHandle == c.lastHandleID {
+			panic("# of file handles exhausted")
+		}
+	}
+
+	c.lastHandleID = handle
+
+	c.handles[fuse.HandleID(handle)] = newSHandle
+	return fuse.HandleID(handle)
 }
 
 func (c *Server) Create(ctx context.Context, req *fuse.CreateRequest, res *fuse.CreateResponse) error {
-	return fuse.EPERM
-	// return nil
+	log.Printf("Create called")
+	inode, ref, err := c.ds.CreateWritable(ctx, core.INode(req.Node), req.Name)
+	if err != nil {
+		log.Printf("Create failed: %v", err)
+		return err
+	}
+	err = c.getattr(ctx, inode, &res.LookupResponse.Attr)
+	handle := c.bindHandle(ref)
+	res.OpenResponse.Handle = handle
+	return nil
 }
 
+// forget a node
 func (c *Server) Forget(ctx context.Context, req *fuse.ForgetRequest) error {
-
 	return nil
 }
 
 func (c *Server) Rename(ctx context.Context, req *fuse.RenameRequest) error {
-	return fuse.EPERM
-	// return nil
+	err := c.ds.Rename(ctx, core.INode(req.Node), req.OldName, core.INode(req.NewDir), req.NewName)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *Server) Read(ctx context.Context, req *fuse.ReadRequest, res *fuse.ReadResponse) error {
@@ -620,17 +713,38 @@ func (c *Server) Read(ctx context.Context, req *fuse.ReadRequest, res *fuse.Read
 }
 
 func (c *Server) Write(ctx context.Context, req *fuse.WriteRequest, res *fuse.WriteResponse) error {
-	panic("unimp")
+	c.meta.Lock()
+	h, handleValid := c.handles[req.Handle]
+	c.meta.Unlock()
+
+	if !handleValid {
+		return fuse.ESTALE
+	}
+
+	if err := h.Write(ctx, req, res); err != nil {
+		return err
+	}
 
 	return nil
 }
 
 func (c *Server) Flush(ctx context.Context, req *fuse.FlushRequest) error {
-
 	return nil
 }
 
 func (c *Server) Release(ctx context.Context, req *fuse.ReleaseRequest) error {
+	c.meta.Lock()
+	h, handleValid := c.handles[req.Handle]
+	if handleValid {
+		delete(c.handles, req.Handle)
+	}
+	c.meta.Unlock()
+
+	if !handleValid {
+		return fuse.ESTALE
+	}
+
+	h.Release()
 
 	return nil
 }
@@ -649,12 +763,10 @@ func (c *Server) Statfs(ctx context.Context, req *fuse.StatfsRequest, res *fuse.
 }
 
 func (c *Server) Destroy(ctx context.Context, req *fuse.DestroyRequest) error {
-	c.ds.Close()
 	return nil
 }
 
 func (c *Server) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
-
 	return nil
 }
 

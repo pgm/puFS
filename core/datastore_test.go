@@ -193,19 +193,20 @@ func TestSubDirListing(t *testing.T) {
 	require.Equal([]string{".", "..", "b"}, extractNames(contents))
 }
 
-// func TestMkdirErrors(t *testing.T) {
-// 	require := require.New(t)
-// 	d := testDataStore()
+func TestMkdirErrors(t *testing.T) {
+	require := require.New(t)
+	d := testDataStore()
+	ctx := context.Background()
 
-// 	_, err := d.MakeDir(RootINode, "a")
-// 	require.Nil(err)
+	_, err := d.MakeDir(ctx, RootINode, "a")
+	require.Nil(err)
 
-// 	_, err = d.MakeDir(RootINode, "a")
-// 	require.Equal(NoSuchNodeErr, err)
+	_, err = d.MakeDir(ctx, RootINode, "a")
+	require.Equal(ExistsErr, err)
 
-// 	_, err = d.MakeDir(100, "a")
-// 	require.Equal(ParentMissingErr, err)
-// }
+	_, err = d.MakeDir(ctx, 100, "a")
+	require.Equal(NoSuchNodeErr, err)
+}
 
 func TestRmdir(t *testing.T) {
 	require := require.New(t)
@@ -228,19 +229,20 @@ func TestRmdir(t *testing.T) {
 	require.Nil(err)
 }
 
-// func TestCreateFileErrors(t *testing.T) {
-// 	require := require.New(t)
-// 	d := testDataStore()
+func TestCreateFileErrors(t *testing.T) {
+	ctx := context.Background()
+	require := require.New(t)
+	d := testDataStore()
 
-// 	_, err := d.MakeDir(RootINode, "a")
-// 	require.Nil(err)
+	_, err := d.MakeDir(ctx, RootINode, "a")
+	require.Nil(err)
 
-// 	_, _, err = d.CreateWritable(RootINode, "a")
-// 	require.Equal(ExistsErr, err)
+	_, _, err = d.CreateWritable(ctx, RootINode, "a")
+	require.Equal(ExistsErr, err)
 
-// 	_, _, err = d.CreateWritable(100, "a")
-// 	require.Equal(NoSuchNodeErr, err)
-// }
+	_, _, err = d.CreateWritable(ctx, 100, "a")
+	require.Equal(NoSuchNodeErr, err)
+}
 
 type NetworkClientImp struct {
 }

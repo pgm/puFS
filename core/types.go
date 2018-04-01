@@ -34,6 +34,10 @@ type RemoteRef interface {
 	// Release()
 }
 
+type HasPrintStats interface {
+	PrintStats()
+}
+
 type WritableRef interface {
 	Reader
 	io.Writer

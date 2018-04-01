@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/gob"
 	"log"
 	"os"
 	"path"
@@ -24,7 +25,6 @@ func NewDataStore(dir string) *core.DataStore {
 	}
 
 	ctx := context.Background()
-	//	projectID := "gcs-test-1136"
 
 	// Creates a client.
 	client, err := storage.NewClient(ctx, option.WithServiceAccountFile("/Users/pmontgom/gcs-keys/gcs-test-b3b10d9077bb.json"))
@@ -33,18 +33,29 @@ func NewDataStore(dir string) *core.DataStore {
 	}
 	bucketName := "gcs-test-1136"
 	f := remote.NewRemoteRefFactory(client, bucketName, "blocks/")
-	// if err != nil {
-	// 	log.Fatalf("Failed to create remote: %v", err)
-	// }
 	ds := core.NewDataStore(dir, f, f, sply2.NewBoltDB(path.Join(dir, "freezer.db"), [][]byte{core.ChunkStat}),
 		sply2.NewBoltDB(path.Join(dir, "nodes.db"), [][]byte{core.ChildNodeBucket, core.NodeBucket}))
 	return ds
 }
 
+func GobRegisterTypes() {
+	var x *core.GCSObjectSource
+	gob.Register(core.BlockID{})
+	gob.Register(x)
+}
+
 func main() {
+	GobRegisterTypes()
 	args := os.Args
 	mountPoint := args[1]
-	repo := args[2]
+	if _, err := os.Stat(mountPoint); os.IsNotExist(err) {
+		err = os.MkdirAll(mountPoint, 0777)
+		if err != nil {
+			log.Fatalf("Could not create directory %s", mountPoint)
+		}
+	}
+
+	repo := path.Join(path.Dir(mountPoint), ".sply2-data-"+path.Base(mountPoint))
 	ds := NewDataStore(repo)
 	fs.Mount(mountPoint, ds)
 }
