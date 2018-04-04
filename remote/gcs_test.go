@@ -142,18 +142,6 @@ func TestGCSClient(t *testing.T) {
 	w.Close()
 }
 
-// func newDataStore(dir string) *DataStore {
-// 	return
-// }
-
-// func testDataStore() *core.DataStore {
-// 	dir, err := ioutil.TempDir("", "test")
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	return newDataStore(dir)
-// }
-
 func TestDatastoreWithGCSRemote(t *testing.T) {
 	needsServiceFile(t)
 

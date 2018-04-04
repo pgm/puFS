@@ -7,6 +7,7 @@ import (
 	"encoding/gob"
 	"fmt"
 	"log"
+	"os"
 	"time"
 )
 
@@ -85,7 +86,19 @@ func getNodeRepr(tx RTx, id INode) (*NodeRepr, error) {
 		return nil, NoSuchNodeErr
 	}
 
-	return bytesToNode(value), nil
+	node := bytesToNode(value)
+
+	if node.LocalWritablePath != "" {
+		st, err := os.Stat(node.LocalWritablePath)
+		if err != nil {
+			panic("Could not stat")
+		}
+		node.ModTime = st.ModTime()
+		node.Size = st.Size()
+		log.Printf("inode %v has size %d", id, node.Size)
+	}
+
+	return node, nil
 }
 
 func (db *INodeDB) Close() {

@@ -353,14 +353,11 @@ func (c *Server) handleRequest(ctx context.Context, r fuse.Request) error {
 		r.Respond(s)
 		return nil
 
-	// case *fuse.SetattrRequest:
-	// 	s := &fuse.SetattrResponse{}
-	// 	err := c.Setattr(r, s)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	// 	r.Respond(s)
-	// 	return nil
+	case *fuse.SetattrRequest:
+		s := &fuse.SetattrResponse{}
+		// pretend this is always successful
+		r.Respond(s)
+		return nil
 
 	case *fuse.RemoveRequest:
 		err := c.Remove(ctx, r)
@@ -531,16 +528,20 @@ func (c *Server) getattr(ctx context.Context, inode core.INode, attr *fuse.Attr)
 
 	attr.Valid = 0 * time.Second
 	attr.Inode = uint64(inode)
-	attr.Size = uint64(attr.Size)           // size in bytes
-	attr.Blocks = uint64(attr.Size/512 + 1) // size in 512-byte units
-	attr.Atime = nattr.ModTime              // time of last access
-	attr.Mtime = nattr.ModTime              // time of last modification
-	attr.Ctime = nattr.ModTime              // time of last inode change
-	attr.Crtime = nattr.ModTime             // time of creation (OS X only)
+	attr.Size = uint64(nattr.Size)           // size in bytes
+	attr.Blocks = uint64(nattr.Size/512 + 1) // size in 512-byte units
+	attr.Atime = nattr.ModTime               // time of last access
+	attr.Mtime = nattr.ModTime               // time of last modification
+	attr.Ctime = nattr.ModTime               // time of last inode change
+	attr.Crtime = nattr.ModTime              // time of creation (OS X only)
 	if nattr.IsDir {
-		attr.Mode = 0775 | os.ModeDir // file mode
+		attr.Mode = 0775 | os.ModeDir // all dirs are read/write
 	} else {
-		attr.Mode = 0664 // file mode
+		if nattr.BID != core.NABlock {
+			attr.Mode = 0664 // read/write if not frozen
+		} else {
+			attr.Mode = 0444 // read-only
+		}
 	}
 	attr.Nlink = 1              // number of links (usually 1)
 	attr.Uid = c.defaultUserID  // owner uid
@@ -553,6 +554,10 @@ func (c *Server) getattr(ctx context.Context, inode core.INode, attr *fuse.Attr)
 }
 
 func mapError(err error) error {
+	if err == fuse.EEXIST || err == fuse.ENOSYS || err == fuse.EIO || err == fuse.ENOATTR || err == fuse.ENOENT || err == fuse.ENOTSUP || err == fuse.EPERM || err == fuse.ERANGE {
+		return err
+	}
+
 	if err == core.NoSuchNodeErr {
 		return fuse.ENOENT
 	}
@@ -605,38 +610,42 @@ func (c *Server) Mkdir(ctx context.Context, req *fuse.MkdirRequest, res *fuse.Mk
 
 func (c *Server) Open(ctx context.Context, req *fuse.OpenRequest, res *fuse.OpenResponse) error {
 	if req.Dir {
-		c.meta.Lock()
-		hID := c.lastHandleID
-		var h *sHandle
-		for {
-			hID++
-			if hID > c.maxHandles {
-				hID = 1
-			}
-			if hID == c.lastHandleID {
-				// we've wrapped around
-				panic("Exhausted max handles")
-			}
-			h = c.handles[fuse.HandleID(hID)]
-			if h == nil {
-				break
-			}
-		}
-		c.lastHandleID = hID
-		c.handles[fuse.HandleID(hID)] = &sHandle{inode: core.INode(req.Node)}
-		c.meta.Unlock()
-
-		res.Handle = fuse.HandleID(hID)
+		res.Handle = c.bindHandle(&sHandle{inode: core.INode(req.Node)})
 		return nil
 	}
 	// opening a regular file
 
-	return fuse.EPERM
-	// return nil
+	openMode := req.Flags & (fuse.OpenReadOnly | fuse.OpenReadWrite | fuse.OpenWriteOnly)
+	if openMode == fuse.OpenReadWrite || openMode == fuse.OpenWriteOnly {
+		// open writable file
+
+		// if (req.Flags & fuse.OpenSync) == fuse.OpenSync {
+		// 	return fuse.EPERM
+		// }
+
+		truncate := (req.Flags & fuse.OpenTruncate) == fuse.OpenTruncate
+
+		ref, err := c.ds.GetWritableRef(ctx, core.INode(req.Node), truncate)
+		if err != nil {
+			return err
+		}
+
+		res.Handle = c.bindHandle(&sHandle{ref: ref})
+		log.Printf("opened file for writing: handle=%v", res.Handle)
+		return nil
+	}
+
+	// open read-only file
+	ref, err := c.ds.GetReadRef(ctx, core.INode(req.Node))
+	if err != nil {
+		return err
+	}
+	res.Handle = c.bindHandle(&sHandle{ref: ref})
+	log.Printf("opened file for reading: handle=%v", res.Handle)
+	return nil
 }
 
-func (c *Server) bindHandle(obj interface{}) fuse.HandleID {
-	newSHandle := &sHandle{ref: obj}
+func (c *Server) bindHandle(h *sHandle) fuse.HandleID {
 
 	c.meta.Lock()
 	defer c.meta.Unlock()
@@ -655,7 +664,7 @@ func (c *Server) bindHandle(obj interface{}) fuse.HandleID {
 
 	c.lastHandleID = handle
 
-	c.handles[fuse.HandleID(handle)] = newSHandle
+	c.handles[fuse.HandleID(handle)] = h
 	return fuse.HandleID(handle)
 }
 
@@ -667,8 +676,12 @@ func (c *Server) Create(ctx context.Context, req *fuse.CreateRequest, res *fuse.
 		return err
 	}
 	err = c.getattr(ctx, inode, &res.LookupResponse.Attr)
-	handle := c.bindHandle(ref)
+	if err != nil {
+		return err
+	}
+	handle := c.bindHandle(&sHandle{ref: ref})
 	res.OpenResponse.Handle = handle
+	log.Printf("Handle = %v", handle)
 	return nil
 }
 

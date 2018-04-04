@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -82,6 +83,56 @@ func TestRename(t *testing.T) {
 	require.Equal(NoSuchNodeErr, err)
 	_, err = d.GetNodeID(ctx, RootINode, "b")
 	require.Nil(err)
+}
+
+func TestMultipleWrite(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+	d := testDataStore()
+
+	aID := createFile(require, d, RootINode, "a", "data")
+
+	r, err := d.GetReadRef(ctx, aID)
+	require.Nil(err)
+
+	buffer := make([]byte, 100)
+	n, err := r.Read(ctx, buffer)
+	require.Nil(err)
+	require.Equal("data", string(buffer[:n]))
+
+	// now update the file
+	w, err := d.GetWritableRef(ctx, aID, false)
+	offset, err := w.Seek(2, os.SEEK_SET)
+	require.Nil(err)
+	require.Equal(int64(2), offset)
+
+	w.Write([]byte("TA..."))
+	offset, err = w.Seek(0, os.SEEK_SET)
+	require.Nil(err)
+	require.Equal(int64(0), offset)
+
+	// read it back with writable handle
+	n, err = w.Read(ctx, buffer)
+	require.Nil(err)
+	require.Equal("daTA...", string(buffer[:n]))
+
+	// get a reader and read back
+	r, err = d.GetReadRef(ctx, aID)
+	require.Nil(err)
+	n, err = r.Read(ctx, buffer)
+	require.Nil(err)
+	require.Equal("daTA...", string(buffer[:n]))
+
+	// test truncate
+	w, err = d.GetWritableRef(ctx, aID, true)
+	w.Write([]byte("da"))
+
+	_, err = r.Seek(0, os.SEEK_SET)
+	require.Nil(err)
+	n, err = r.Read(ctx, buffer)
+	require.Nil(err)
+	require.Equal("da", string(buffer[:n]))
+
 }
 
 func TestWriteRead(t *testing.T) {

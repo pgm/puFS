@@ -843,6 +843,41 @@ func (d *DataStore) Freeze(inode INode) (BlockID, error) {
 	return BID, err
 }
 
+func (d *DataStore) GetWritableRef(ctx context.Context, inode INode, truncate bool) (WritableRef, error) {
+	var node *NodeRepr
+	var err error
+
+	err = d.db.view(func(tx RTx) error {
+		node, err = getNodeRepr(tx, inode)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if node.IsDir {
+		return nil, IsDirErr
+	}
+
+	if node.LocalWritablePath == "" {
+		return nil, NotWritableErr
+	}
+
+	if truncate {
+		fp, err := os.OpenFile(node.LocalWritablePath, os.O_TRUNC|os.O_RDWR, 0777)
+		if err != nil {
+			return nil, err
+		}
+		fp.Close()
+	}
+
+	return &WritableRefImp{node.LocalWritablePath, 0}, nil
+}
+
 func (d *DataStore) GetReadRef(ctx context.Context, inode INode) (Reader, error) {
 	var node *NodeRepr
 	var err error

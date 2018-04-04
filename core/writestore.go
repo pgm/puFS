@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 )
 
@@ -55,6 +56,7 @@ func (w *WritableRefImp) Read(ctx context.Context, dest []byte) (int, error) {
 }
 
 func (w *WritableRefImp) Write(buffer []byte) (int, error) {
+	log.Printf("Writing %d bytes to %s:%d", len(buffer), w.filename, w.offset)
 	f, err := os.OpenFile(w.filename, os.O_RDWR, 0755)
 	if err != nil {
 		return 0, err

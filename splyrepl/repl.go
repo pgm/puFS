@@ -253,6 +253,8 @@ func (e *Execution) executeStatement(statementType *regexp.Regexp, match []strin
 	}
 }
 
+const ServiceFile = "/Users/pmontgom/gcs-keys/gcs-test-b3b10d9077bb.json"
+
 func NewDataStore(dir string) *Execution {
 	var err error
 	if _, err = os.Stat(dir); os.IsNotExist(err) {
@@ -266,7 +268,7 @@ func NewDataStore(dir string) *Execution {
 	//	projectID := "gcs-test-1136"
 
 	// Creates a client.
-	client, err := storage.NewClient(ctx, option.WithServiceAccountFile(""))
+	client, err := storage.NewClient(ctx, option.WithServiceAccountFile(ServiceFile))
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
