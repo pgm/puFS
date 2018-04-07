@@ -1,6 +1,7 @@
 package region
 
 import (
+	"fmt"
 	"sort"
 )
 
@@ -63,7 +64,7 @@ func (m *Mask) addDisjoint(start int64, end int64) {
 		return
 	}
 	if end < start {
-		panic("invalid range")
+		panic(fmt.Sprintf("invalid range: (%d, %d)", start, end))
 	}
 	cmp := makeCmp(m, start)
 	i := sort.Search(len(m.regions), cmp)
@@ -89,6 +90,9 @@ func (m *Mask) addDisjoint(start int64, end int64) {
 func (m *Mask) Add(start int64, end int64) {
 	disjointRegions := m.GetMissing(start, end)
 	for _, r := range disjointRegions {
+		if r.End < r.Start {
+			panic(fmt.Sprintf("GetMissing(%d, %d) returned a segment: (%d, %d)", start, end, r.Start, r.End))
+		}
 		m.addDisjoint(r.Start, r.End)
 	}
 }

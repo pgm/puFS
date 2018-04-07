@@ -84,6 +84,7 @@ func NewDataStore(dir string) *core.DataStore {
 	f := remote.NewRemoteRefFactory(client, bucketName, "blocks/")
 	ds := core.NewDataStore(dir, f, f, sply2.NewBoltDB(path.Join(dir, "freezer.db"), [][]byte{core.ChunkStat}),
 		sply2.NewBoltDB(path.Join(dir, "nodes.db"), [][]byte{core.ChildNodeBucket, core.NodeBucket}))
+	ds.SetClients(f)
 	return ds
 }
 

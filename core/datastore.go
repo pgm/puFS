@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -77,7 +78,7 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory, rrf2 Re
 		}
 	}
 
-	chunkSize := 100
+	chunkSize := 200 * 1024
 	ds := &DataStore{path: storagePath,
 		mountTablePath:    mountTablePath,
 		db:                NewINodeDB(1000, nodeKV),
@@ -956,4 +957,25 @@ func (d *DataStore) GetAttr(ctx context.Context, inode INode) (*NodeRepr, error)
 	})
 
 	return node, err
+}
+
+func (ds *DataStore) SplitPath(ctx context.Context, fullPath string) (INode, string, error) {
+	var err error
+	if fullPath[0] != '/' {
+		return InvalidINode, "", fmt.Errorf("Invalid path: %s", fullPath)
+	}
+
+	if fullPath == "/" {
+		return RootINode, ".", nil
+	}
+
+	components := strings.Split(fullPath[1:], "/")
+	parent := INode(RootINode)
+	for _, c := range components[0 : len(components)-1] {
+		parent, err = ds.GetNodeID(ctx, parent, c)
+		if err != nil {
+			return InvalidINode, "", err
+		}
+	}
+	return parent, components[len(components)-1], nil
 }

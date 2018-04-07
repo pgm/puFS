@@ -34,16 +34,17 @@ func Mount(dir string, ds *core.DataStore) {
 			panic(err)
 		}
 
-		fmt.Printf("Req start: %v\n", req)
+		fmt.Printf("(%d) Req start: %v\n", s.reqsInFlight, req)
 		rID := req.Hdr().ID
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
 			err := s.serve(req)
-			fmt.Printf("Req done: %v, err=%v\n", req, err)
 			s.meta.Lock()
+			s.reqsInFlight--
 			s.reqs[rID] = nil
 			s.meta.Unlock()
+			fmt.Printf("Req done: %v, err=%v\n", req, err)
 		}()
 	}
 
@@ -108,6 +109,7 @@ func (c *Server) serve(r fuse.Request) error {
 	} else {
 		c.reqs[hdr.ID] = req
 	}
+	c.reqsInFlight++
 	c.meta.Unlock()
 
 	// Call this before responding.
@@ -240,6 +242,7 @@ type Server struct {
 	handles      map[fuse.HandleID]*sHandle
 	lastHandleID int
 	maxHandles   int
+	reqsInFlight int
 
 	// Used to ensure worker goroutines finish before Serve returns
 	wg sync.WaitGroup
