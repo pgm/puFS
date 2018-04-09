@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/pgm/sply2"
@@ -38,6 +39,19 @@ var mountCmd = &cobra.Command{
 		repo := path.Join(path.Dir(mountPoint), ".sply2-data-"+path.Base(mountPoint))
 		ds := NewDataStore(repo)
 
+		ticker := time.NewTicker(5 * time.Second)
+
+		go (func() {
+			for {
+				_, ok := <-ticker.C
+				if ok {
+					ds.PrintStats()
+				} else {
+					return
+				}
+			}
+		})()
+
 		if remoteLabel != "" {
 			ctx := context.Background()
 			err := ds.MountByLabel(ctx, core.RootINode, remoteLabel)
@@ -47,6 +61,7 @@ var mountCmd = &cobra.Command{
 		}
 
 		fs.Mount(mountPoint, ds)
+		ticker.Stop()
 	},
 }
 

@@ -39,6 +39,9 @@ type DataStore struct {
 	// locker        *INodeLocker
 
 	networkClient NetworkClient
+
+	lazyDirBlockTimes      *Population
+	lazyDirFetchChildTimes *Population
 }
 
 // default expiry is 48 hours
@@ -80,12 +83,14 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory, rrf2 Re
 
 	chunkSize := 200 * 1024
 	ds := &DataStore{path: storagePath,
-		mountTablePath:    mountTablePath,
-		db:                NewINodeDB(1000, nodeKV),
-		writableStore:     NewWritableStore(writablePath),
-		remoteRefFactory2: rrf2,
-		freezer:           NewFreezer(freezerPath, freezerKV, rrf2, chunkSize),
-		remoteRefFactory:  remoteRefFactory}
+		mountTablePath:         mountTablePath,
+		db:                     NewINodeDB(1000, nodeKV),
+		writableStore:          NewWritableStore(writablePath),
+		remoteRefFactory2:      rrf2,
+		freezer:                NewFreezer(freezerPath, freezerKV, rrf2, chunkSize),
+		remoteRefFactory:       remoteRefFactory,
+		lazyDirBlockTimes:      NewPopulation(1000),
+		lazyDirFetchChildTimes: NewPopulation(1000)}
 
 	return ds
 }
@@ -359,6 +364,8 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 	}
 	if node.IsDir && node.IsDeferredChildFetch {
 		if node.BID != NABlock {
+			startTime := time.Now()
+
 			remoteSource, err := d.remoteRefFactory.GetBlockSource(ctx, node.BID)
 			if err != nil {
 				return err
@@ -391,11 +398,16 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 			if err != nil {
 				panic(err)
 			}
+
 			err = d.db.addBlockLazyChildren(tx, id, dir.Entries)
 			if err != nil {
 				return err
 			}
+
+			endTime := time.Now()
+			d.lazyDirBlockTimes.Add(int(endTime.Sub(startTime) / time.Millisecond))
 		} else {
+			startTime := time.Now()
 			if node.RemoteSource == nil {
 				panic("No BID set nor remote source")
 			}
@@ -408,6 +420,8 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 			if err != nil {
 				return err
 			}
+			endTime := time.Now()
+			d.lazyDirFetchChildTimes.Add(int(endTime.Sub(startTime) / time.Millisecond))
 		}
 
 		node.IsDeferredChildFetch = false
@@ -978,4 +992,19 @@ func (ds *DataStore) SplitPath(ctx context.Context, fullPath string) (INode, str
 		}
 	}
 	return parent, components[len(components)-1], nil
+}
+
+func (ds *DataStore) PrintStats() {
+	if ps, ok := ds.freezer.(HasPrintStats); ok {
+		ps.PrintStats()
+	}
+
+	p, ok := ds.lazyDirBlockTimes.Percentiles([]float32{50, 90, 95})
+	if ok {
+		fmt.Printf("Time taken fetching dirs from block (%d): %d, %d, %d\n", ds.lazyDirBlockTimes.Count(), p[0], p[1], p[2])
+	}
+	p, ok = ds.lazyDirFetchChildTimes.Percentiles([]float32{50, 90, 95})
+	if ok {
+		fmt.Printf("Time taken fetching dirs get child calls (%d): %d, %d, %d\n", ds.lazyDirFetchChildTimes.Count(), p[0], p[1], p[2])
+	}
 }

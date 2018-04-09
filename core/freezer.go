@@ -80,10 +80,15 @@ func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64)
 			return err
 		}
 
+		startTime := time.Now()
 		err = w.remote.Copy(ctx, r.Start, r.End-r.Start, f)
 		if err != nil {
 			return err
 		}
+		endTime := time.Now()
+		w.owner.requestLengthSamples.Add(int(r.End - r.Start))
+		w.owner.requestLatency.Add(int(endTime.Sub(startTime) / time.Millisecond))
+
 		w.owner.addValidRegion(w.BID, r.Start, r.End)
 	}
 
@@ -139,6 +144,9 @@ type FreezerImp struct {
 
 	mutex        sync.Mutex
 	blockRegions map[BlockID]*region.Mask
+
+	requestLatency       *Population
+	requestLengthSamples *Population
 }
 
 func NewFreezer(path string, db KVStore, refFactory RemoteRefFactory2, chunkSize int) *FreezerImp {
@@ -148,8 +156,39 @@ func NewFreezer(path string, db KVStore, refFactory RemoteRefFactory2, chunkSize
 		log.Fatal(err)
 	}
 
-	return &FreezerImp{path: chunkPath, db: db, chunkSize: chunkSize,
-		blockRegions: make(map[BlockID]*region.Mask), refFactory: refFactory}
+	return &FreezerImp{path: chunkPath,
+		db:                   db,
+		chunkSize:            chunkSize,
+		blockRegions:         make(map[BlockID]*region.Mask),
+		refFactory:           refFactory,
+		requestLengthSamples: NewPopulation(1000),
+		requestLatency:       NewPopulation(1000)}
+}
+
+func (f *FreezerImp) PrintStats() {
+	f.mutex.Lock()
+	blocksWithRegionsCached := len(f.blockRegions)
+	f.mutex.Unlock()
+
+	fmt.Printf("Blocks with region maps cached: %d\n", blocksWithRegionsCached)
+
+	latencies, ok := f.requestLatency.Percentiles([]float32{50, 90, 99})
+	if ok {
+		fmt.Printf("50%%, 90%%, 99%% Remote read latency (in ms) (%d): %d, %d, %d\n", f.requestLatency.Count(), latencies[0],
+			latencies[1],
+			latencies[2])
+	} else {
+		fmt.Printf("No latencies recorded\n")
+	}
+
+	sizes, ok := f.requestLengthSamples.Percentiles([]float32{50, 90, 99})
+	if ok {
+		fmt.Printf("50%%, 90%%, 99%% Remote read size (in bytes) (%d): %d, %d, %d\n", f.requestLengthSamples.Count(), sizes[0],
+			sizes[1],
+			sizes[2])
+	} else {
+		fmt.Printf("No read sizes recorded\n")
+	}
 }
 
 func (f *FreezerImp) Close() error {
@@ -309,18 +348,13 @@ func (f *FreezerImp) addValidRegion(BID BlockID, start int64, end int64) error {
 	}
 	defer fp.Close()
 
-	writeInt := func(v int64) error {
-		b := make([]byte, 8)
-		binary.LittleEndian.PutUint64(b, uint64(v))
-		_, err := fp.Write(b)
-		if err != nil {
-			return err
-		}
-		return nil
+	b := make([]byte, 16)
+	binary.LittleEndian.PutUint64(b[0:8], uint64(start))
+	binary.LittleEndian.PutUint64(b[8:16], uint64(end))
+	_, err = fp.Write(b)
+	if err != nil {
+		return err
 	}
-
-	writeInt(start)
-	writeInt(end)
 	mask.Add(start, end)
 
 	return nil
