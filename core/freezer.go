@@ -303,7 +303,7 @@ func (f *FreezerImp) addValidRegion(BID BlockID, start int64, end int64) error {
 		return err
 	}
 
-	fp, err := os.OpenFile(regionLog, os.O_CREATE|os.O_APPEND, 0777)
+	fp, err := os.OpenFile(regionLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0777)
 	if err != nil {
 		return err
 	}

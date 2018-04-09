@@ -69,6 +69,53 @@ func (rf *PullCountRefFactoryMockRef) GetChildNodes(ctx context.Context) ([]*Rem
 	panic("unimp")
 }
 
+func TestPersistedPartialReads(t *testing.T) {
+	require := require.New(t)
+
+	dir, err := ioutil.TempDir("", "test")
+	require.Nil(err)
+
+	rf := &PullCountRefFactoryMock{}
+
+	kv := NewMemStore([][]byte{ChunkStat})
+	f := NewFreezer(dir, kv, rf, 2)
+	BID := BlockID{2}
+
+	rr := rf.GetRef("x")
+	ctx := context.Background()
+
+	err = f.AddBlock(ctx, BID, rr)
+	require.Nil(err)
+
+	fr, err := f.GetRef(BID)
+	require.Nil(err)
+
+	_, err = fr.Seek(10, 0)
+	require.Nil(err)
+
+	dest := make([]byte, 3)
+	fr.Read(ctx, dest)
+
+	// confirm we read data from the remote
+	require.Equal(4, rf.bytesRead)
+	rf.bytesRead = 0
+
+	// make a new freezer
+	f2 := NewFreezer(dir, kv, rf, 2)
+
+	fr, err = f2.GetRef(BID)
+	require.Nil(err)
+
+	_, err = fr.Seek(10, 0)
+	require.Nil(err)
+
+	dest = make([]byte, 3)
+	fr.Read(ctx, dest)
+
+	// confirm we didn't need to read any additional data
+	require.Equal(0, rf.bytesRead)
+}
+
 func TestPartialReads(t *testing.T) {
 	require := require.New(t)
 
