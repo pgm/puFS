@@ -84,7 +84,7 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory, rrf2 Re
 	chunkSize := 200 * 1024
 	ds := &DataStore{path: storagePath,
 		mountTablePath:         mountTablePath,
-		db:                     NewINodeDB(1000, nodeKV),
+		db:                     NewINodeDB(10000000, nodeKV),
 		writableStore:          NewWritableStore(writablePath),
 		remoteRefFactory2:      rrf2,
 		freezer:                NewFreezer(freezerPath, freezerKV, rrf2, chunkSize),

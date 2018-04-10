@@ -95,7 +95,6 @@ func getNodeRepr(tx RTx, id INode) (*NodeRepr, error) {
 		}
 		node.ModTime = st.ModTime()
 		node.Size = st.Size()
-		log.Printf("inode %v has size %d", id, node.Size)
 	}
 
 	return node, nil
@@ -116,7 +115,7 @@ func NewINodeDB(maxINodes uint32, db KVStore) *INodeDB {
 		return nil
 	})
 
-	return &INodeDB{db: db, lastID: RootINode, maxINodes: maxINodes}
+	return &INodeDB{db: db, lastID: RootINode + 1, maxINodes: maxINodes}
 }
 
 func (db *INodeDB) update(fn func(tx RWTx) error) error {
@@ -127,14 +126,19 @@ func (db *INodeDB) view(fn func(tx RTx) error) error {
 	return db.db.View(fn)
 }
 
-func (db *INodeDB) getNextFreeInode(tx RTx) (INode, error) {
+func (db *INodeDB) getNextFreeInode(tx RWTx) (INode, error) {
 	firstID := db.lastID
 	id := db.lastID
 	idBytes := make([]byte, 4)
 
 	b := tx.RBucket(NodeBucket)
 
+	attemptCount := 0
 	for {
+		attemptCount++
+		if attemptCount > 100 {
+			fmt.Printf("AttemptCount = %d, id=%d, firstID=%d\n", attemptCount, id, firstID)
+		}
 		id++
 		if uint32(id) > db.maxINodes {
 			id = RootINode + 1
@@ -146,6 +150,7 @@ func (db *INodeDB) getNextFreeInode(tx RTx) (INode, error) {
 		binary.LittleEndian.PutUint32(idBytes, uint32(id))
 
 		if b.Get(idBytes) == nil {
+			db.lastID = id
 			return id, nil
 		}
 	}

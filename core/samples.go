@@ -52,7 +52,7 @@ func (p *Population) Percentiles(percentiles []float32) ([]int, bool) {
 		return nil, false
 	} else {
 		for j := range result {
-			i := int(float32(len(s))*percentiles[j]*100) / 100
+			i := int(float32(len(s))*percentiles[j]) / 100
 			if i >= len(s) {
 				i = len(s) - 1
 			}

@@ -34,7 +34,7 @@ func Mount(dir string, ds *core.DataStore) {
 			panic(err)
 		}
 
-		fmt.Printf("(%d) Req start: %v\n", s.reqsInFlight, req)
+		//		fmt.Printf("(%d) Req start: %v\n", s.reqsInFlight, req)
 		rID := req.Hdr().ID
 		s.wg.Add(1)
 		go func() {
@@ -44,7 +44,9 @@ func Mount(dir string, ds *core.DataStore) {
 			s.reqsInFlight--
 			s.reqs[rID] = nil
 			s.meta.Unlock()
-			fmt.Printf("Req done: %v, err=%v\n", req, err)
+			if err != nil {
+				fmt.Printf("Req done: %v, err=%v\n", req, err)
+			}
 		}()
 	}
 
@@ -569,20 +571,24 @@ func mapError(err error) error {
 }
 
 func (c *Server) Lookup(ctx context.Context, req *fuse.LookupRequest, resp *fuse.LookupResponse) error {
-	inode, err := c.ds.GetNodeID(ctx, core.INode(req.Node), req.Name)
-	if err != nil {
-		return err
-	}
+	if req.Name == "Contents" {
+		return fuse.ENOENT
+	} else {
+		inode, err := c.ds.GetNodeID(ctx, core.INode(req.Node), req.Name)
+		if err != nil {
+			return err
+		}
 
-	err = c.getattr(ctx, inode, &resp.Attr)
-	if err != nil {
-		return err
-	}
+		err = c.getattr(ctx, inode, &resp.Attr)
+		if err != nil {
+			return err
+		}
 
-	// TODO: Not sure about these
-	resp.EntryValid = 0
-	resp.Generation = 0
-	resp.Node = fuse.NodeID(inode)
+		// TODO: Not sure about these
+		resp.EntryValid = 0
+		resp.Generation = 0
+		resp.Node = fuse.NodeID(inode)
+	}
 
 	return nil
 }
@@ -655,12 +661,12 @@ func (c *Server) bindHandle(h *sHandle) fuse.HandleID {
 	handle := c.lastHandleID + 1
 	firstTryHandle := handle
 	for {
-		existing := c.handles[fuse.HandleID(c.lastHandleID)]
+		existing := c.handles[fuse.HandleID(handle)]
 		if existing == nil {
 			break
 		}
-		c.lastHandleID++
-		if firstTryHandle == c.lastHandleID {
+		handle++
+		if firstTryHandle == handle {
 			panic("# of file handles exhausted")
 		}
 	}
@@ -722,8 +728,6 @@ func (c *Server) Read(ctx context.Context, req *fuse.ReadRequest, res *fuse.Read
 			if err != nil {
 				return err
 			}
-
-			fmt.Printf("dirs=%v\n", dirs)
 
 			var data []byte
 			for _, dir := range dirs {

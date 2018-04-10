@@ -58,8 +58,13 @@ func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64)
 	// align the read region with ChunkSize
 	chunkSize := w.owner.chunkSize
 
+	origStart := start
+	origEnd := end
 	start = (start / int64(chunkSize)) * int64(chunkSize)
 	end = ((end + int64(chunkSize) - 1) / int64(chunkSize)) * int64(chunkSize)
+	if end <= start {
+		panic(fmt.Sprintf("Invalid range in ensurePulled: start=%d, end=%d, origStart=%d, origEnd=%d", start, end, origStart, origEnd))
+	}
 	if end > w.size {
 		end = w.size
 	}

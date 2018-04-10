@@ -25,6 +25,11 @@ func makeCmp(m *Mask, start int64) func(int) bool {
 }
 
 func (m *Mask) GetMissing(start int64, end int64) []Region {
+	// origStart := start
+	// origEnd := end
+	if end <= start {
+		panic(fmt.Sprintf("GetMissing called on invalid range: start=%d, end=%d", start, end))
+	}
 	result := make([]Region, 0, 10)
 
 	cmp := makeCmp(m, start)
@@ -47,7 +52,13 @@ func (m *Mask) GetMissing(start int64, end int64) []Region {
 			thisEnd = m.regions[i].Start
 		}
 
-		result = append(result, Region{start, thisEnd})
+		if thisEnd > start {
+			result = append(result, Region{start, thisEnd})
+		} else if thisEnd <= start {
+			break
+			//			panic(fmt.Sprintf("GetMissing failure: origStart=%d, origEnd=%d, start=%d, thisEnd=%d, regions=%v\n", origStart, origEnd, start, thisEnd, m.regions))
+		}
+
 		start = m.regions[i].End
 		i++
 	}
@@ -88,6 +99,9 @@ func (m *Mask) addDisjoint(start int64, end int64) {
 }
 
 func (m *Mask) Add(start int64, end int64) {
+	if end <= start {
+		panic(fmt.Sprintf("Attempted add of invalid region: start=%d, end=%d", start, end))
+	}
 	disjointRegions := m.GetMissing(start, end)
 	for _, r := range disjointRegions {
 		if r.End < r.Start {
