@@ -86,11 +86,13 @@ func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64)
 		}
 
 		startTime := time.Now()
+		id := w.owner.RemoteCopyStart(w.BID, r.Start, r.End, startTime)
 		err = w.remote.Copy(ctx, r.Start, r.End-r.Start, f)
 		if err != nil {
 			return err
 		}
 		endTime := time.Now()
+		w.owner.RemoteCopyEnd(id, endTime)
 		w.owner.requestLengthSamples.Add(int(r.End - r.Start))
 		w.owner.requestLatency.Add(int(endTime.Sub(startTime) / time.Millisecond))
 
@@ -150,6 +152,10 @@ type FreezerImp struct {
 	mutex        sync.Mutex
 	blockRegions map[BlockID]*region.Mask
 
+	historyMutext   sync.Mutex
+	history         []*CopyHistory
+	nextHistorySlot int
+
 	requestLatency       *Population
 	requestLengthSamples *Population
 }
@@ -167,7 +173,8 @@ func NewFreezer(path string, db KVStore, refFactory RemoteRefFactory2, chunkSize
 		blockRegions:         make(map[BlockID]*region.Mask),
 		refFactory:           refFactory,
 		requestLengthSamples: NewPopulation(1000),
-		requestLatency:       NewPopulation(1000)}
+		requestLatency:       NewPopulation(1000),
+		history:              make([]*CopyHistory, MaxHistoryLength)}
 }
 
 func (f *FreezerImp) PrintStats() {
@@ -194,6 +201,49 @@ func (f *FreezerImp) PrintStats() {
 	} else {
 		fmt.Printf("No read sizes recorded\n")
 	}
+
+	f.historyMutext.Lock()
+	for _, e := range f.history {
+		if e == nil {
+			break
+		}
+		BIDStr := base64.URLEncoding.EncodeToString(e.BID[:])
+		var status string
+		if e.Complete {
+			status = fmt.Sprintf("complete (%.1f kb/sec)", float64(e.End-e.Start)/1024/(float64(e.EndTime.Sub(e.StartTime))/float64(time.Second)))
+		} else {
+			status = "ongoing"
+		}
+		fmt.Printf("Copy %s(%d-%d): %s\n", BIDStr, e.Start, e.End, status)
+	}
+	f.historyMutext.Unlock()
+}
+
+type CopyHistory struct {
+	BID       BlockID
+	Start     int64
+	End       int64
+	StartTime time.Time
+	EndTime   time.Time
+	Complete  bool
+}
+
+const MaxHistoryLength = 32
+
+func (f *FreezerImp) RemoteCopyStart(BID BlockID, Start int64, End int64, startTime time.Time) *CopyHistory {
+	entry := &CopyHistory{BID: BID, Start: Start, End: End, StartTime: startTime, Complete: false}
+	f.historyMutext.Lock()
+
+	f.history[f.nextHistorySlot] = entry
+	f.nextHistorySlot = (f.nextHistorySlot + 1) % MaxHistoryLength
+
+	f.historyMutext.Unlock()
+	return entry
+}
+
+func (f *FreezerImp) RemoteCopyEnd(id *CopyHistory, endTime time.Time) {
+	id.EndTime = endTime
+	id.Complete = true
 }
 
 func (f *FreezerImp) Close() error {

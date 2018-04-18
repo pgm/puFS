@@ -14,7 +14,7 @@
 
 package main
 
-import "github.com/pgm/sply2/splyit/cmd"
+import "github.com/pgm/sply2/pufs/cmd"
 
 func main() {
 	cmd.Execute()

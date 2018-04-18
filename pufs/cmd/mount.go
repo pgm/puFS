@@ -8,6 +8,8 @@ import (
 	"path"
 	"time"
 
+	"github.com/spf13/viper"
+
 	"cloud.google.com/go/storage"
 	"github.com/pgm/sply2"
 	"github.com/pgm/sply2/core"
@@ -27,8 +29,9 @@ var mountCmd = &cobra.Command{
 	Long:  `More desc`,
 	Args:  cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		GobRegisterTypes()
-		mountPoint := args[0]
+		repoPath := args[0]
+		mountPoint := args[1]
+
 		if _, err := os.Stat(mountPoint); os.IsNotExist(err) {
 			err = os.MkdirAll(mountPoint, 0777)
 			if err != nil {
@@ -36,8 +39,7 @@ var mountCmd = &cobra.Command{
 			}
 		}
 
-		repo := path.Join(path.Dir(mountPoint), ".sply2-data-"+path.Base(mountPoint))
-		ds := NewDataStore(repo)
+		ds := NewDataStore(repoPath, false)
 
 		ticker := time.NewTicker(5 * time.Second)
 
@@ -79,24 +81,31 @@ func init() {
 	// mountCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
 
-func NewDataStore(dir string) *core.DataStore {
+func NewDataStore(dir string, createIfMissing bool) *core.DataStore {
+	bucketName := viper.GetString("bucket")
+	keyPrefix := viper.GetString("keyprefix")
+	credentialsPath := viper.GetString("credentials")
+
 	var err error
 	if _, err = os.Stat(dir); os.IsNotExist(err) {
-		err = os.MkdirAll(dir, 0700)
-	}
-	if err != nil {
-		panic(err)
+		if createIfMissing {
+			err = os.MkdirAll(dir, 0700)
+			if err != nil {
+				log.Fatal(err)
+			}
+		} else {
+			log.Fatalf("No repo at %s", dir)
+		}
 	}
 
 	ctx := context.Background()
 
 	// Creates a client.
-	client, err := storage.NewClient(ctx, option.WithServiceAccountFile("/Users/pmontgom/gcs-keys/gcs-test-b3b10d9077bb.json"))
+	client, err := storage.NewClient(ctx, option.WithServiceAccountFile(credentialsPath))
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
-	bucketName := "gcs-test-1136"
-	f := remote.NewRemoteRefFactory(client, bucketName, "blocks/")
+	f := remote.NewRemoteRefFactory(client, bucketName, keyPrefix)
 	ds := core.NewDataStore(dir, f, f, sply2.NewBoltDB(path.Join(dir, "freezer.db"), [][]byte{core.ChunkStat}),
 		sply2.NewBoltDB(path.Join(dir, "nodes.db"), [][]byte{core.ChildNodeBucket, core.NodeBucket}))
 	ds.SetClients(f)
