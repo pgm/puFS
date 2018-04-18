@@ -308,7 +308,7 @@ func main() {
 		// AutoComplete:    completer,
 		InterruptPrompt:   "^C",
 		EOFPrompt:         "exit",
-		HistorySearchFold: true,
+//		HistorySearchFold: true,
 		// FuncFilterInputRune: filterInput,
 	})
 	if err != nil {
