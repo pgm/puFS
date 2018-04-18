@@ -559,7 +559,7 @@ func (c *Server) getattr(ctx context.Context, inode core.INode, attr *fuse.Attr)
 }
 
 func mapError(err error) error {
-	if err == fuse.EEXIST || err == fuse.ENOSYS || err == fuse.EIO || err == fuse.ENOATTR || err == fuse.ENOENT || err == fuse.ENOTSUP || err == fuse.EPERM || err == fuse.ERANGE {
+	if _, ok := err.(fuse.Errno) ; ok {
 		return err
 	}
 
