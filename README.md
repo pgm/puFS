@@ -24,11 +24,14 @@ The "sply2" command can be used to perform operations such as "push" and
 
 Example
 
+
+```
 pufs init repo
 pufs add repo gs://...
 pufs mount repo ~/testmount
+```
 
-
+```
 pufs init repo-a
 pufs mount repo-a ~/a
 umount ~/a
@@ -36,3 +39,4 @@ pufs push repo-a a
 pufs init repo-b
 pufs add repo-b a
 pufs mount repo-a ~/a
+```

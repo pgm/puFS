@@ -40,7 +40,7 @@ to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		repoPath := args[0]
 		url := args[1]
-		newFilePath := "." //args[2]
+		newFilePath, _ := cmd.Flags().GetString("path")
 
 		ds := NewDataStore(repoPath, false)
 
@@ -82,5 +82,5 @@ func init() {
 
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
-	// addCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	addCmd.Flags().StringP("path", "p", ".", "Path within repo to add")
 }

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/gob"
+	"fmt"
 	"log"
 	"os"
 	"path"
@@ -27,7 +28,7 @@ var mountCmd = &cobra.Command{
 	Use:   "mount",
 	Short: "Mount the directory",
 	Long:  `More desc`,
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		repoPath := args[0]
 		mountPoint := args[1]
@@ -85,6 +86,8 @@ func NewDataStore(dir string, createIfMissing bool) *core.DataStore {
 	bucketName := viper.GetString("bucket")
 	keyPrefix := viper.GetString("keyprefix")
 	credentialsPath := viper.GetString("credentials")
+
+	fmt.Printf("bucket: %s\nkeyPrefix: %s\n", bucketName, keyPrefix)
 
 	var err error
 	if _, err = os.Stat(dir); os.IsNotExist(err) {
