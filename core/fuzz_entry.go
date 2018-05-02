@@ -100,9 +100,9 @@ func (e *Execution) executeStatement(ctx context.Context, statementType *regexp.
 			err = e.ds.Push(ctx, inode, match[2])
 		}
 	} else if statementType == MountStatement {
-		inode, err := e.getINode(ctx, match[1])
+		parent, name, err := e.splitPath(ctx, match[1])
 		if err == nil {
-			err = e.ds.MountByLabel(ctx, inode, match[2])
+			err = e.ds.MountByLabel(ctx, parent, name, match[2])
 		}
 	} else if statementType == UnmountStatement {
 		inode, err := e.getINode(ctx, match[1])

@@ -21,7 +21,8 @@ func TestFreezePush(t *testing.T) {
 
 	f := NewRemoteRefFactoryMem()
 	f.objects["k"] = []byte{1}
-	ds1 := NewDataStore(dir1, f, NewMemRemoteRefFactory2(f), NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	ds1, err := NewDataStore(dir1, f, NewMemRemoteRefFactory2(f), NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	require.Nil(err)
 
 	aID := createFile(require, ds1, RootINode, "a", content)
 	err = ds1.Push(ctx, RootINode, "sample-label")
@@ -30,12 +31,16 @@ func TestFreezePush(t *testing.T) {
 
 	dir2, err := ioutil.TempDir("", "test")
 	require.Nil(err)
-	ds2 := NewDataStore(dir2, f, NewMemRemoteRefFactory2(f), NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
-
-	err = ds2.MountByLabel(ctx, RootINode, "sample-label")
+	ds2, err := NewDataStore(dir2, f, NewMemRemoteRefFactory2(f), NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
 	require.Nil(err)
 
-	aID, err = ds2.GetNodeID(ctx, RootINode, "a")
+	err = ds2.MountByLabel(ctx, RootINode, "mount", "sample-label")
+	require.Nil(err)
+
+	mountInode, err := ds2.GetNodeID(ctx, RootINode, "mount")
+	require.Nil(err)
+
+	aID, err = ds2.GetNodeID(ctx, mountInode, "a")
 	require.Nil(err)
 	r, err := ds2.GetReadRef(ctx, aID)
 	require.Nil(err)

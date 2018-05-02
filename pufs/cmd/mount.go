@@ -21,11 +21,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var remoteLabel string
-
 // mountCmd represents the mount command
 var mountCmd = &cobra.Command{
-	Use:   "mount",
+	Use:   "mount [repoPath] [mountPoint]",
 	Short: "Mount the directory",
 	Long:  `More desc`,
 	Args:  cobra.ExactArgs(2),
@@ -55,14 +53,6 @@ var mountCmd = &cobra.Command{
 			}
 		})()
 
-		if remoteLabel != "" {
-			ctx := context.Background()
-			err := ds.MountByLabel(ctx, core.RootINode, remoteLabel)
-			if err != nil {
-				panic(err)
-			}
-		}
-
 		fs.Mount(mountPoint, ds)
 		ticker.Stop()
 	},
@@ -76,7 +66,6 @@ func init() {
 	// Cobra supports Persistent Flags which will work for this command
 	// and all subcommands, e.g.:
 	// mountCmd.PersistentFlags().String("foo", "", "A help for foo")
-	mountCmd.Flags().StringVarP(&remoteLabel, "remote", "r", "", "Remote directory to mount as the root")
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
 	// mountCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
@@ -108,10 +97,16 @@ func NewDataStore(dir string, createIfMissing bool) *core.DataStore {
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
+
 	f := remote.NewRemoteRefFactory(client, bucketName, keyPrefix)
-	ds := core.NewDataStore(dir, f, f, sply2.NewBoltDB(path.Join(dir, "freezer.db"), [][]byte{core.ChunkStat}),
+	ds, err := core.NewDataStore(dir, f, f, sply2.NewBoltDB(path.Join(dir, "freezer.db"), [][]byte{core.ChunkStat}),
 		sply2.NewBoltDB(path.Join(dir, "nodes.db"), [][]byte{core.ChildNodeBucket, core.NodeBucket}))
 	ds.SetClients(f)
+
+	if err != nil {
+		log.Fatalf("Failed to create DataStore: %v", err)
+	}
+
 	return ds
 }
 

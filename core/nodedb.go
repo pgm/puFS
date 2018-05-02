@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
-	"log"
 	"os"
 	"time"
 )
@@ -105,17 +104,26 @@ func (db *INodeDB) Close() {
 }
 
 func NewINodeDB(maxINodes uint32, db KVStore) *INodeDB {
-	db.Update(func(tx RWTx) error {
+	return &INodeDB{db: db, lastID: RootINode + 1, maxINodes: maxINodes}
+}
+
+func (db *INodeDB) AddEmptyRootDir() error {
+	err := db.db.Update(func(tx RWTx) error {
 		err := addEmptyDir(tx, RootINode, RootINode)
 
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		return nil
+		return err
 	})
 
-	return &INodeDB{db: db, lastID: RootINode + 1, maxINodes: maxINodes}
+	return err
+}
+
+func (db *INodeDB) AddBlockIDRootDir(BID BlockID) error {
+	err := db.db.Update(func(tx RWTx) error {
+		err := addBIDMount(tx, RootINode, RootINode, BID)
+		return err
+	})
+
+	return err
 }
 
 func (db *INodeDB) update(fn func(tx RWTx) error) error {
@@ -487,6 +495,39 @@ func addChild(tx RWTx, parent INode, inode INode, name string) error {
 
 	nb := tx.WBucket(ChildNodeBucket)
 	return nb.Put(key, inodeBytes)
+}
+
+func (db *INodeDB) AddBIDMount(tx RWTx, parent INode, name string, BID BlockID) (INode, error) {
+	err := assertValidDirWillMutate(tx, parent)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	id, err := db.getNextFreeInode(tx)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	err = addBIDMount(tx, parent, id, BID)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	err = addChild(tx, parent, id, name)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	return id, nil
+}
+
+func addBIDMount(tx RWTx, parentINode INode, inode INode, BID BlockID) error {
+	return putNodeRepr(tx, inode, &NodeRepr{ParentINode: parentINode,
+		IsDir:                true,
+		Size:                 0,
+		ModTime:              time.Now(),
+		BID:                  BID,
+		IsDeferredChildFetch: true})
 }
 
 func (db *INodeDB) AddRemoteGCS(tx RWTx, parent INode, name string, bucket string, key string, generation int64, size int64, ModTime time.Time, isDir bool) (INode, error) {

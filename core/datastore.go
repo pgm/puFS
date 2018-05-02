@@ -56,43 +56,81 @@ func (d *DataStore) SetClients(networkClient NetworkClient) {
 	d.networkClient = networkClient
 }
 
-func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory, rrf2 RemoteRefFactory2, freezerKV KVStore, nodeKV KVStore) *DataStore {
+type DataStoreConfig struct {
+	chunkSize    int
+	rootBID      BlockID
+	openExisting bool
+}
+
+type DataStoreOption func(config *DataStoreConfig)
+
+func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory,
+	rrf2 RemoteRefFactory2, freezerKV KVStore,
+	nodeKV KVStore, options ...DataStoreOption) (*DataStore, error) {
+
+	config := DataStoreConfig{chunkSize: 200 * 1024, rootBID: NABlock}
+	for _, option := range options {
+		option(&config)
+	}
+
 	freezerPath := path.Join(storagePath, "freezer")
 	writablePath := path.Join(storagePath, "writable")
-	err := os.MkdirAll(freezerPath, 0700)
-	if err != nil {
-		log.Fatalf("%s: Could not create %s\n", err, freezerPath)
-	}
-	err = os.MkdirAll(writablePath, 0700)
-	if err != nil {
-		log.Fatalf("%s: Could not create %s\n", err, writablePath)
-	}
-
 	mountTablePath := path.Join(storagePath, "mounts.gob")
-	var mounts []*Mount
-	if _, err = os.Stat(mountTablePath); !os.IsNotExist(err) {
-		f, err := os.Open(mountTablePath)
-		defer f.Close()
-
-		dec := gob.NewDecoder(f)
-		err = dec.Decode(&mounts)
+	if config.openExisting {
+		if _, err := os.Stat(storagePath); os.IsNotExist(err) {
+			return nil, InvalidRepoErr
+		}
+	} else {
+		if _, err := os.Stat(storagePath); os.IsExist(err) {
+			return nil, RepoExistsErr
+		}
+		err := os.MkdirAll(freezerPath, 0700)
 		if err != nil {
-			log.Fatalf("%s: Could not read %s", err, mountTablePath)
+			log.Fatalf("%s: Could not create %s\n", err, freezerPath)
+		}
+		err = os.MkdirAll(writablePath, 0700)
+		if err != nil {
+			log.Fatalf("%s: Could not create %s\n", err, writablePath)
+		}
+
+		var mounts []*Mount
+		if _, err = os.Stat(mountTablePath); !os.IsNotExist(err) {
+			f, err := os.Open(mountTablePath)
+			defer f.Close()
+
+			dec := gob.NewDecoder(f)
+			err = dec.Decode(&mounts)
+			if err != nil {
+				log.Fatalf("%s: Could not read %s", err, mountTablePath)
+			}
 		}
 	}
 
-	chunkSize := 200 * 1024
+	db := NewINodeDB(10000000, nodeKV)
+
+	var err error
+	if config.rootBID != NABlock {
+		err = db.AddBlockIDRootDir(config.rootBID)
+	} else {
+		if !config.openExisting {
+			err = db.AddEmptyRootDir()
+		}
+	}
+	if err != nil {
+		log.Fatalf("%s: Could not create root dir", err)
+	}
+
 	ds := &DataStore{path: storagePath,
 		mountTablePath:         mountTablePath,
-		db:                     NewINodeDB(10000000, nodeKV),
+		db:                     db,
 		writableStore:          NewWritableStore(writablePath),
 		remoteRefFactory2:      rrf2,
-		freezer:                NewFreezer(freezerPath, freezerKV, rrf2, chunkSize),
+		freezer:                NewFreezer(freezerPath, freezerKV, rrf2, config.chunkSize),
 		remoteRefFactory:       remoteRefFactory,
 		lazyDirBlockTimes:      NewPopulation(1000),
 		lazyDirFetchChildTimes: NewPopulation(1000)}
 
-	return ds
+	return ds, nil
 }
 
 func (d *DataStore) persistMountTable() {
@@ -116,7 +154,7 @@ func (d *DataStore) Close() {
 
 // Mount
 
-func (d *DataStore) MountByLabel(ctx context.Context, inode INode, label string) error {
+func (d *DataStore) MountByLabel(ctx context.Context, inode INode, name string, label string) error {
 	err := validateName(label)
 	if err != nil {
 		return err
@@ -127,7 +165,8 @@ func (d *DataStore) MountByLabel(ctx context.Context, inode INode, label string)
 		return err
 	}
 
-	return d.Mount(ctx, inode, BID)
+	_, err = d.Mount(ctx, inode, name, BID)
+	return err
 }
 
 func genRandomString() string {
@@ -185,38 +224,38 @@ func (d *DataStore) Unmount(ctx context.Context, inode INode) error {
 	return nil
 }
 
-func (d *DataStore) Mount(ctx context.Context, inode INode, BID BlockID) error {
+func (d *DataStore) Mount(ctx context.Context, parent INode, name string, BID BlockID) (INode, error) {
 	if BID == NABlock {
 		panic("Cannot mount invalid block")
 	}
 
-	for _, m := range d.mounts {
-		if m.mountPoint == inode {
-			return AlreadyMountPointErr
-		}
-	}
-
-	mount := &Mount{mountPoint: inode, leaseName: genRandomString(), lastLeaseRenewal: time.Now(), BID: BID}
-	err := d.remoteRefFactory.SetLease(ctx, mount.leaseName, time.Now().Add(DEFAULT_EXPIRY), BID)
+	err := validateName(name)
 	if err != nil {
-		return err
+		return InvalidINode, err
 	}
 
+	var inode INode
 	err = d.db.update(func(tx RWTx) error {
-		err = d.db.MutateBIDForMount(tx, inode, BID)
+		inode, err = d.db.AddBIDMount(tx, parent, name, BID)
 		if err != nil {
 			return err
 		}
 		return nil
 	})
 	if err != nil {
-		return err
+		return InvalidINode, err
+	}
+
+	mount := &Mount{mountPoint: inode, leaseName: genRandomString(), lastLeaseRenewal: time.Now(), BID: BID}
+	err = d.remoteRefFactory.SetLease(ctx, mount.leaseName, time.Now().Add(DEFAULT_EXPIRY), BID)
+	if err != nil {
+		return InvalidINode, err
 	}
 
 	d.mounts = append(d.mounts, mount)
 	d.persistMountTable()
 
-	return nil
+	return inode, nil
 }
 
 func (d *DataStore) GetParent(inode INode) (INode, error) {

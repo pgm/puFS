@@ -30,7 +30,11 @@ func createFile(require *require.Assertions, d *DataStore, parent INode, name st
 func newDataStore(dir string) *DataStore {
 	repo := NewRemoteRefFactoryMem()
 	rrf2 := NewMemRemoteRefFactory2(repo)
-	return NewDataStore(dir, repo, rrf2, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	ds, err := NewDataStore(dir, repo, rrf2, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	if err != nil {
+		panic(err)
+	}
+	return ds
 }
 
 func testDataStore() *DataStore {
@@ -51,11 +55,13 @@ func TestPersistence(t *testing.T) {
 	}
 	freezerStore := NewMemStore([][]byte{ChunkStat})
 	nodeStore := NewMemStore([][]byte{ChildNodeBucket, NodeBucket})
-	ds1 := NewDataStore(dir, nil, nil, freezerStore, nodeStore)
+	ds1, err := NewDataStore(dir, nil, nil, freezerStore, nodeStore)
+	require.Nil(err)
 	aID := createFile(require, ds1, RootINode, "a", "data")
 	ds1.Close()
 
-	ds2 := NewDataStore(dir, nil, nil, freezerStore, nodeStore)
+	ds2, err := NewDataStore(dir, nil, nil, freezerStore, nodeStore)
+	require.Nil(err)
 
 	r, err := ds2.GetReadRef(ctx, aID)
 	require.Nil(err)

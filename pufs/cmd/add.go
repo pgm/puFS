@@ -21,7 +21,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/pgm/sply2/core"
 	"github.com/spf13/cobra"
 )
 
@@ -59,11 +58,7 @@ to quickly create a Cobra application.`,
 		} else if strings.HasPrefix(url, "https://") || strings.HasPrefix(url, "http://") {
 			_, err = ds.AddRemoteURL(ctx, parent, name, url)
 		} else {
-			var inode core.INode
-			inode, err = ds.GetNodeID(ctx, parent, name)
-			if err == nil {
-				err = ds.MountByLabel(ctx, inode, url)
-			}
+			err = ds.MountByLabel(ctx, parent, name, url)
 		}
 		if err != nil {
 			log.Fatalf("Error: %s", err)

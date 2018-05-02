@@ -16,3 +16,6 @@ var AlreadyMountPointErr = errors.New("This path is already mounted")
 var NoSuchMountErr = errors.New("Was not a valid mount")
 var UndefinedRootErr = errors.New("No such root exists")
 var NotWritableErr = errors.New("File is not writable")
+
+var InvalidRepoErr = errors.New("No such repo at that path")
+var RepoExistsErr = errors.New("Cannot create repo as directory already exists")
