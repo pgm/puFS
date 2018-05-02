@@ -559,7 +559,7 @@ func (c *Server) getattr(ctx context.Context, inode core.INode, attr *fuse.Attr)
 }
 
 func mapError(err error) error {
-	if _, ok := err.(fuse.Errno) ; ok {
+	if _, ok := err.(fuse.Errno); ok {
 		return err
 	}
 
@@ -684,12 +684,19 @@ func (c *Server) Create(ctx context.Context, req *fuse.CreateRequest, res *fuse.
 		log.Printf("Create failed: %v", err)
 		return err
 	}
+
 	err = c.getattr(ctx, inode, &res.LookupResponse.Attr)
 	if err != nil {
 		return err
 	}
+	// TODO: Not sure about these
+	res.LookupResponse.EntryValid = 0
+	res.LookupResponse.Generation = 0
+	res.LookupResponse.Node = fuse.NodeID(inode)
+
 	handle := c.bindHandle(&sHandle{ref: ref})
 	res.OpenResponse.Handle = handle
+
 	log.Printf("Handle = %v", handle)
 	return nil
 }
