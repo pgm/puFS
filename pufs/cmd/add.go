@@ -28,18 +28,13 @@ var GCSUrlExp *regexp.Regexp = regexp.MustCompile("^gs://([^/]+)/(.*)$")
 
 // addCmd represents the add command
 var addCmd = &cobra.Command{
-	Use:   "add",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
-
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+	Use:   "add [repo] [url]",
+	Short: "Link a GCS path to a path within the repo",
+	Args:  cobra.ExactArgs(3),
 	Run: func(cmd *cobra.Command, args []string) {
 		repoPath := args[0]
 		url := args[1]
-		newFilePath, _ := cmd.Flags().GetString("path")
+		newFilePath := args[2]
 
 		ds := NewDataStore(repoPath, false)
 
@@ -77,5 +72,5 @@ func init() {
 
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
-	addCmd.Flags().StringP("path", "p", ".", "Path within repo to add")
+	// addCmd.Flags().StringP("path", "p", ".", "Path within repo to add")
 }

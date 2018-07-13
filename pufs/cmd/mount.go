@@ -25,7 +25,6 @@ import (
 var mountCmd = &cobra.Command{
 	Use:   "mount [repoPath] [mountPoint]",
 	Short: "Mount the directory",
-	Long:  `More desc`,
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		repoPath := args[0]
@@ -71,12 +70,29 @@ func init() {
 	// mountCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
 
-func NewDataStore(dir string, createIfMissing bool) *core.DataStore {
+type NewDataStoreOptions struct {
+	mountAsRoot string
+}
+
+type NewDataStoreOption func(o *NewDataStoreOptions)
+
+func MountAsRoot(path string) func(o *NewDataStoreOptions) {
+	return func(o *NewDataStoreOptions) {
+		o.mountAsRoot = path
+	}
+}
+
+func NewDataStore(dir string, createIfMissing bool, options ...NewDataStoreOption) *core.DataStore {
 	bucketName := viper.GetString("bucket")
 	keyPrefix := viper.GetString("keyprefix")
 	credentialsPath := viper.GetString("credentials")
+	var optionStruct NewDataStoreOptions
 
-	fmt.Printf("bucket: %s\nkeyPrefix: %s\n", bucketName, keyPrefix)
+	for _, option := range options {
+		option(&optionStruct)
+	}
+
+	fmt.Printf("bucket: %s\nkeyPrefix: %s\nmountAsRoot: %s\n", bucketName, keyPrefix, optionStruct.mountAsRoot)
 
 	var err error
 	if _, err = os.Stat(dir); os.IsNotExist(err) {
@@ -98,14 +114,33 @@ func NewDataStore(dir string, createIfMissing bool) *core.DataStore {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 
+	dsOptions := make([]core.DataStoreOption, 0)
+	dsOptions = append(dsOptions, core.OpenExisting())
+	if optionStruct.mountAsRoot != "" {
+		gcsmatch := GCSUrlExp.FindStringSubmatch(optionStruct.mountAsRoot)
+		if gcsmatch != nil {
+			bucket := gcsmatch[1]
+			key := gcsmatch[2]
+			dsOptions = append(dsOptions, core.DataStoreWithGCSRoot(bucket, key))
+		} else {
+			log.Fatalf("GCS Root was not parsable: %s", optionStruct.mountAsRoot)
+		}
+	}
+
 	f := remote.NewRemoteRefFactory(client, bucketName, keyPrefix)
-	ds, err := core.NewDataStore(dir, f, f, sply2.NewBoltDB(path.Join(dir, "freezer.db"), [][]byte{core.ChunkStat}),
-		sply2.NewBoltDB(path.Join(dir, "nodes.db"), [][]byte{core.ChildNodeBucket, core.NodeBucket}))
-	ds.SetClients(f)
+	ds, err := core.NewDataStore(dir, f, f,
+		sply2.NewBoltDB(path.Join(dir, "freezer.db"),
+			[][]byte{core.ChunkStat}),
+		sply2.NewBoltDB(path.Join(dir, "nodes.db"),
+			[][]byte{core.ChildNodeBucket, core.NodeBucket}),
+		dsOptions...,
+	)
 
 	if err != nil {
 		log.Fatalf("Failed to create DataStore: %v", err)
 	}
+
+	ds.SetClients(f)
 
 	return ds
 }

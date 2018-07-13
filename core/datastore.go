@@ -59,10 +59,31 @@ func (d *DataStore) SetClients(networkClient NetworkClient) {
 type DataStoreConfig struct {
 	chunkSize    int
 	rootBID      BlockID
+	rootBucket   string
+	rootKey      string
 	openExisting bool
 }
 
 type DataStoreOption func(config *DataStoreConfig)
+
+func DataStoreWithGCSRoot(bucket string, key string) func(config *DataStoreConfig) {
+	return func(config *DataStoreConfig) {
+		config.rootBucket = bucket
+		config.rootKey = key
+	}
+}
+
+func DataStoreWithBIDRoot(BID BlockID) func(config *DataStoreConfig) {
+	return func(config *DataStoreConfig) {
+		config.rootBID = BID
+	}
+}
+
+func OpenExisting() func(config *DataStoreConfig) {
+	return func(config *DataStoreConfig) {
+		config.openExisting = true
+	}
+}
 
 func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory,
 	rrf2 RemoteRefFactory2, freezerKV KVStore,
@@ -81,9 +102,10 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory,
 			return nil, InvalidRepoErr
 		}
 	} else {
-		if _, err := os.Stat(storagePath); os.IsExist(err) {
+		if _, err := os.Stat(storagePath); err == nil {
 			return nil, RepoExistsErr
 		}
+		log.Printf("Creating new repo")
 		err := os.MkdirAll(freezerPath, 0700)
 		if err != nil {
 			log.Fatalf("%s: Could not create %s\n", err, freezerPath)
@@ -110,7 +132,11 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory,
 
 	var err error
 	if config.rootBID != NABlock {
+		log.Printf("Adding BID root")
 		err = db.AddBlockIDRootDir(config.rootBID)
+	} else if config.rootBucket != "" {
+		log.Printf("Adding GCS root: %s %s", config.rootBucket, config.rootKey)
+		err = db.AddRemoteGCSRootDir(config.rootBucket, config.rootKey)
 	} else {
 		if !config.openExisting {
 			err = db.AddEmptyRootDir()
@@ -401,7 +427,9 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 	if err != nil {
 		return err
 	}
+	log.Printf("loadLazyChildren %d %v %v", id, node.IsDir, node.IsDeferredChildFetch)
 	if node.IsDir && node.IsDeferredChildFetch {
+		log.Printf("fetch needed")
 		if node.BID != NABlock {
 			startTime := time.Now()
 
@@ -455,6 +483,7 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 			if err != nil {
 				return err
 			}
+			log.Printf("fetching")
 			err = d.db.addRemoteLazyChildren(tx, id, nodes)
 			if err != nil {
 				return err

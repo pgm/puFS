@@ -117,6 +117,15 @@ func (db *INodeDB) AddEmptyRootDir() error {
 	return err
 }
 
+func (db *INodeDB) AddRemoteGCSRootDir(bucket string, key string) error {
+	err := db.db.Update(func(tx RWTx) error {
+		err := addRemoteGCS(tx, RootINode, RootINode, bucket, key, 0, 0, time.Now(), true)
+		return err
+	})
+
+	return err
+}
+
 func (db *INodeDB) AddBlockIDRootDir(BID BlockID) error {
 	err := db.db.Update(func(tx RWTx) error {
 		err := addBIDMount(tx, RootINode, RootINode, BID)
