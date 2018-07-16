@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"regexp"
 	"time"
 
 	"github.com/spf13/viper"
@@ -20,6 +21,8 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+var PUFSUrlExp *regexp.Regexp = regexp.MustCompile("^pufs:///(.*)$")
 
 // mountCmd represents the mount command
 var mountCmd = &cobra.Command{
@@ -92,13 +95,15 @@ func NewDataStore(dir string, createIfMissing bool, options ...NewDataStoreOptio
 		option(&optionStruct)
 	}
 
-	fmt.Printf("bucket: %s\nkeyPrefix: %s\nmountAsRoot: %s\n", bucketName, keyPrefix, optionStruct.mountAsRoot)
+	fmt.Printf("dir:%s\nbucket: %s\nkeyPrefix: %s\nmountAsRoot: %s\ncreateIfMissing: %v\n", dir, bucketName, keyPrefix, optionStruct.mountAsRoot, createIfMissing)
 
 	var err error
 	if _, err = os.Stat(dir); os.IsNotExist(err) {
+		log.Printf("err=%v", err)
 		if createIfMissing {
 			err = os.MkdirAll(dir, 0700)
 			if err != nil {
+				log.Printf("bail 1err=%v", err)
 				log.Fatal(err)
 			}
 		} else {
@@ -114,21 +119,36 @@ func NewDataStore(dir string, createIfMissing bool, options ...NewDataStoreOptio
 		log.Fatalf("Failed to create client: %v", err)
 	}
 
+	remoteRefFactory := remote.NewRemoteRefFactory(client, bucketName, keyPrefix)
+
 	dsOptions := make([]core.DataStoreOption, 0)
-	dsOptions = append(dsOptions, core.OpenExisting())
+	if !createIfMissing {
+		dsOptions = append(dsOptions, core.OpenExisting())
+	}
+
 	if optionStruct.mountAsRoot != "" {
 		gcsmatch := GCSUrlExp.FindStringSubmatch(optionStruct.mountAsRoot)
+
 		if gcsmatch != nil {
 			bucket := gcsmatch[1]
 			key := gcsmatch[2]
 			dsOptions = append(dsOptions, core.DataStoreWithGCSRoot(bucket, key))
+		} else if pufsmatch := PUFSUrlExp.FindStringSubmatch(optionStruct.mountAsRoot); pufsmatch != nil {
+			log.Printf("pufs:%v", pufsmatch)
+			label := pufsmatch[1]
+
+			BID, err := remoteRefFactory.GetRoot(ctx, label)
+			if err != nil {
+				log.Fatalf("Could not get root %s: %v", label, err)
+			}
+
+			dsOptions = append(dsOptions, core.DataStoreWithBIDRoot(BID))
 		} else {
-			log.Fatalf("GCS Root was not parsable: %s", optionStruct.mountAsRoot)
+			log.Fatalf("Root was not parsable: %s", optionStruct.mountAsRoot)
 		}
 	}
 
-	f := remote.NewRemoteRefFactory(client, bucketName, keyPrefix)
-	ds, err := core.NewDataStore(dir, f, f,
+	ds, err := core.NewDataStore(dir, remoteRefFactory, remoteRefFactory,
 		sply2.NewBoltDB(path.Join(dir, "freezer.db"),
 			[][]byte{core.ChunkStat}),
 		sply2.NewBoltDB(path.Join(dir, "nodes.db"),
@@ -140,7 +160,7 @@ func NewDataStore(dir string, createIfMissing bool, options ...NewDataStoreOptio
 		log.Fatalf("Failed to create DataStore: %v", err)
 	}
 
-	ds.SetClients(f)
+	ds.SetClients(remoteRefFactory)
 
 	return ds
 }

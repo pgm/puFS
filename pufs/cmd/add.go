@@ -36,7 +36,7 @@ var addCmd = &cobra.Command{
 		url := args[1]
 		newFilePath := args[2]
 
-		ds := NewDataStore(repoPath, false)
+		ds := NewDataStore(repoPath, true)
 
 		ctx := context.Background()
 		parent, name, err := ds.SplitPath(ctx, newFilePath)

@@ -471,12 +471,19 @@ func (f *FreezerImp) IsPushed(BID BlockID) (bool, error) {
 	var err error
 	err = f.db.View(func(tx RTx) error {
 		info, err := f.readChunkInfo(BID, tx)
+		if err == UnknownBlockID {
+			panic(fmt.Sprintf("IsPushed %v: %v", BID, err))
+		}
+
 		if err != nil {
 			return err
 		}
+		log.Printf("IsPushed -> %v", info.Source)
 		pushed = info.Source != nil
 		return nil
 	})
+
+	log.Printf("pushed=%v", pushed)
 
 	return pushed, err
 }

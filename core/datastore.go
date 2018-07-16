@@ -97,12 +97,13 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory,
 	freezerPath := path.Join(storagePath, "freezer")
 	writablePath := path.Join(storagePath, "writable")
 	mountTablePath := path.Join(storagePath, "mounts.gob")
+	log.Printf("config.openExisting=%v", config.openExisting)
 	if config.openExisting {
 		if _, err := os.Stat(storagePath); os.IsNotExist(err) {
 			return nil, InvalidRepoErr
 		}
 	} else {
-		if _, err := os.Stat(storagePath); err == nil {
+		if _, err := os.Stat(freezerPath); err == nil {
 			return nil, RepoExistsErr
 		}
 		log.Printf("Creating new repo")
@@ -131,14 +132,18 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory,
 	db := NewINodeDB(10000000, nodeKV)
 
 	var err error
-	if config.rootBID != NABlock {
-		log.Printf("Adding BID root")
-		err = db.AddBlockIDRootDir(config.rootBID)
-	} else if config.rootBucket != "" {
-		log.Printf("Adding GCS root: %s %s", config.rootBucket, config.rootKey)
-		err = db.AddRemoteGCSRootDir(config.rootBucket, config.rootKey)
-	} else {
-		if !config.openExisting {
+	rootBID := NABlock
+	log.Printf("openExisting=%v", config.openExisting)
+	if !config.openExisting {
+		if config.rootBID != NABlock {
+			log.Printf("Adding BID root")
+			err = db.AddBlockIDRootDir(config.rootBID)
+			rootBID = config.rootBID
+		} else if config.rootBucket != "" {
+			log.Printf("Adding GCS root: %s %s", config.rootBucket, config.rootKey)
+			err = db.AddRemoteGCSRootDir(config.rootBucket, config.rootKey)
+		} else {
+			log.Printf("Adding empty root dir")
 			err = db.AddEmptyRootDir()
 		}
 	}
@@ -155,6 +160,15 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory,
 		remoteRefFactory:       remoteRefFactory,
 		lazyDirBlockTimes:      NewPopulation(1000),
 		lazyDirFetchChildTimes: NewPopulation(1000)}
+
+	if rootBID != NABlock {
+		// we created a root node which pointed to a remote BID, create the lease for it.
+		err := ds.CreateLeaseForMount(context.Background(), RootINode, rootBID)
+		if err != nil {
+			ds.Close()
+			return nil, err
+		}
+	}
 
 	return ds, nil
 }
@@ -272,16 +286,24 @@ func (d *DataStore) Mount(ctx context.Context, parent INode, name string, BID Bl
 		return InvalidINode, err
 	}
 
-	mount := &Mount{mountPoint: inode, leaseName: genRandomString(), lastLeaseRenewal: time.Now(), BID: BID}
-	err = d.remoteRefFactory.SetLease(ctx, mount.leaseName, time.Now().Add(DEFAULT_EXPIRY), BID)
+	err = d.CreateLeaseForMount(ctx, inode, BID)
 	if err != nil {
 		return InvalidINode, err
 	}
 
+	return inode, nil
+}
+
+func (d *DataStore) CreateLeaseForMount(ctx context.Context, inode INode, BID BlockID) error {
+	mount := &Mount{mountPoint: inode, leaseName: genRandomString(), lastLeaseRenewal: time.Now(), BID: BID}
+	err := d.remoteRefFactory.SetLease(ctx, mount.leaseName, time.Now().Add(DEFAULT_EXPIRY), BID)
+	if err != nil {
+		return err
+	}
+
 	d.mounts = append(d.mounts, mount)
 	d.persistMountTable()
-
-	return inode, nil
+	return nil
 }
 
 func (d *DataStore) GetParent(inode INode) (INode, error) {
@@ -716,7 +738,6 @@ func (d *DataStore) CreateWritable(ctx context.Context, parent INode, name strin
 }
 
 func freezeDir(tempDir string, freezer Freezer, dir *Dir) (*NewBlock, error) {
-	// fmt.Printf("freezeDir\n")
 	f, err := ioutil.TempFile(tempDir, "dir")
 	if err != nil {
 		return nil, err
@@ -730,6 +751,7 @@ func freezeDir(tempDir string, freezer Freezer, dir *Dir) (*NewBlock, error) {
 	f.Close()
 
 	newBlock, err := freezer.AddFile(f.Name())
+	log.Printf("freezeDir %v -> %v\n", f.Name(), newBlock.BID)
 	return newBlock, err
 }
 
@@ -756,6 +778,12 @@ func (ds *DataStore) Push(ctx context.Context, inode INode, name string) error {
 		}
 		return nil
 	})
+
+	if err != nil {
+		return err
+	}
+
+	log.Printf("Collected %d unpushed blocks", len(blockList))
 
 	// Could do this in parallel instead of sequentially
 	for _, BID := range blockList {
@@ -801,26 +829,38 @@ func collectUnpushed(db *INodeDB, tx RTx, inode INode, isPushed func(BlockID) (b
 		return err
 	}
 
-	skip, err := isPushed(node.BID)
-	if err != nil {
-		return err
+	skip := false
+	if node.RemoteSource != nil && !node.IsDir {
+		skip = true
+		log.Printf("Skipping due to remore source")
+	} else {
+		skip, err = isPushed(node.BID)
+		if err != nil {
+			log.Printf("isPushed err: %v", err)
+			return err
+		}
 	}
+
 	if skip {
 		return nil
 	}
 
 	if node.IsDir {
+		log.Printf("Collectunpub(inode=%d)", inode)
 		children, err := db.GetDirContents(tx, inode, false)
 		if err != nil {
+			log.Printf("GetDirContents failed: %v", err)
 			return err
 		}
 		for _, child := range children {
 			err = collectUnpushed(db, tx, child.ID, isPushed, blockList)
 			if err != nil {
+				log.Printf("collectUnpushed failed: %v", err)
 				return err
 			}
 		}
 	}
+	log.Printf("Adding %v", node.BID)
 	*blockList = append(*blockList, node.BID)
 	return nil
 }
