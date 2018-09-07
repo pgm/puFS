@@ -71,6 +71,7 @@ func (rf *PullCountRefFactoryMockRef) GetChildNodes(ctx context.Context) ([]*Rem
 
 func TestPersistedPartialReads(t *testing.T) {
 	require := require.New(t)
+	monitor := &NullMonitor{}
 
 	dir, err := ioutil.TempDir("", "test")
 	require.Nil(err)
@@ -78,7 +79,7 @@ func TestPersistedPartialReads(t *testing.T) {
 	rf := &PullCountRefFactoryMock{}
 
 	kv := NewMemStore([][]byte{ChunkStat})
-	f := NewFreezer(dir, kv, rf, 2)
+	f := NewFreezer(dir, kv, rf, 2, monitor)
 	BID := BlockID{2}
 
 	rr := rf.GetRef("x")
@@ -101,7 +102,7 @@ func TestPersistedPartialReads(t *testing.T) {
 	rf.bytesRead = 0
 
 	// make a new freezer
-	f2 := NewFreezer(dir, kv, rf, 2)
+	f2 := NewFreezer(dir, kv, rf, 2, monitor)
 
 	fr, err = f2.GetRef(BID)
 	require.Nil(err)
@@ -124,7 +125,7 @@ func TestPartialReads(t *testing.T) {
 
 	rf := &PullCountRefFactoryMock{}
 
-	f := NewFreezer(dir, NewMemStore([][]byte{ChunkStat}), rf, 2)
+	f := NewFreezer(dir, NewMemStore([][]byte{ChunkStat}), rf, 2, &NullMonitor{})
 	BID := BlockID{2}
 
 	rr := rf.GetRef("x")

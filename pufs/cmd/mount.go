@@ -48,7 +48,7 @@ var mountCmd = &cobra.Command{
 			for {
 				_, ok := <-ticker.C
 				if ok {
-					ds.PrintStats()
+					//					ds.PrintStats()
 				} else {
 					return
 				}

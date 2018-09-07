@@ -30,7 +30,9 @@ type NodeRepr struct {
 	Size        int64
 	ModTime     time.Time
 
-	BID BlockID
+	// If set, then this cannot be safely pulled by BlockID and should be included on pushes
+	IsDirty bool
+	BID     BlockID
 
 	RemoteSource interface{}
 
@@ -291,10 +293,12 @@ func assertValidDirWillMutate(tx RWTx, id INode) error {
 		return NotDirErr
 	}
 
-	// if we need to invalidate the block ID, recurse to the top of the tree
-	if node.BID != NABlock {
+	// if we need to invalidate the block ID, do so, recursing to the top of the tree
+	if !node.IsDirty {
+		node.IsDirty = true
 		node.BID = NABlock
 		putNodeRepr(tx, id, node)
+
 		if node.ParentINode != RootINode {
 			err := assertValidDirWillMutate(tx, node.ParentINode)
 			if err != nil {
@@ -354,6 +358,7 @@ func (db *INodeDB) addRemoteLazyChildren(tx RWTx, parent INode, children []*Remo
 		}
 		err = putNodeRepr(tx, newNodeID, &NodeRepr{ParentINode: parent,
 			IsDir:                child.IsDir,
+			IsDirty:              false,
 			Size:                 child.Size,
 			ModTime:              child.ModTime,
 			BID:                  child.BID,
@@ -427,7 +432,11 @@ func (db *INodeDB) AddDir(tx RWTx, parent INode, name string) (INode, error) {
 }
 
 func addEmptyDir(tx RWTx, parentINode INode, inode INode) error {
-	return putNodeRepr(tx, inode, &NodeRepr{ParentINode: parentINode, ModTime: time.Now(), IsDir: true})
+	return putNodeRepr(tx, inode, &NodeRepr{
+		IsDirty:     true,
+		ParentINode: parentINode,
+		ModTime:     time.Now(),
+		IsDir:       true})
 }
 
 func splitChildKey(key []byte) (INode, string) {
@@ -531,8 +540,10 @@ func (db *INodeDB) AddBIDMount(tx RWTx, parent INode, name string, BID BlockID) 
 }
 
 func addBIDMount(tx RWTx, parentINode INode, inode INode, BID BlockID) error {
-	return putNodeRepr(tx, inode, &NodeRepr{ParentINode: parentINode,
+	return putNodeRepr(tx, inode, &NodeRepr{
+		ParentINode:          parentINode,
 		IsDir:                true,
+		IsDirty:              false,
 		Size:                 0,
 		ModTime:              time.Now(),
 		BID:                  BID,
@@ -571,8 +582,10 @@ func addRemoteGCS(tx RWTx, parentINode INode, inode INode, bucket string, key st
 		hashID := Sha256.Sum([]byte(fmt.Sprintf("%s/%s:%d", bucket, key, generation)))
 		copy(BID[:], hashID)
 	}
-	return putNodeRepr(tx, inode, &NodeRepr{ParentINode: parentINode,
-		IsDir: isDir,
+	return putNodeRepr(tx, inode, &NodeRepr{
+		ParentINode: parentINode,
+		IsDirty:     false,
+		IsDir:       isDir,
 		RemoteSource: &GCSObjectSource{
 			Bucket:     bucket,
 			Key:        key,
@@ -613,7 +626,9 @@ func addRemoteURL(tx RWTx, parentINode INode, inode INode, url string, etag stri
 	hashID := Sha256.Sum([]byte(url + etag))
 	var BID BlockID
 	copy(BID[:], hashID)
-	return putNodeRepr(tx, inode, &NodeRepr{ParentINode: parentINode,
+	return putNodeRepr(tx, inode, &NodeRepr{
+		ParentINode:  parentINode,
+		IsDirty:      false,
 		IsDir:        false,
 		RemoteSource: &URLSource{URL: url, ETag: etag},
 		Size:         size, ModTime: modTime, BID: BID})
@@ -637,7 +652,10 @@ func addRemoteURL(tx RWTx, parentINode INode, inode INode, url string, etag stri
 // }
 
 func addWritable(tx RWTx, parentINode INode, inode INode, filename string) error {
-	return putNodeRepr(tx, inode, &NodeRepr{ParentINode: parentINode, IsDir: false, LocalWritablePath: filename})
+	return putNodeRepr(tx, inode, &NodeRepr{
+		ParentINode: parentINode, IsDirty: true,
+		IsDir:             false,
+		LocalWritablePath: filename})
 }
 
 func (db *INodeDB) AddWritableLocalFile(tx RWTx, parent INode, name string, filename string) (INode, error) {

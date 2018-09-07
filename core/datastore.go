@@ -40,8 +40,7 @@ type DataStore struct {
 
 	networkClient NetworkClient
 
-	lazyDirBlockTimes      *Population
-	lazyDirFetchChildTimes *Population
+	monitor Monitor
 }
 
 // default expiry is 48 hours
@@ -151,15 +150,16 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory,
 		log.Fatalf("%s: Could not create root dir", err)
 	}
 
+	monitor := &NullMonitor{}
+
 	ds := &DataStore{path: storagePath,
-		mountTablePath:         mountTablePath,
-		db:                     db,
-		writableStore:          NewWritableStore(writablePath),
-		remoteRefFactory2:      rrf2,
-		freezer:                NewFreezer(freezerPath, freezerKV, rrf2, config.chunkSize),
-		remoteRefFactory:       remoteRefFactory,
-		lazyDirBlockTimes:      NewPopulation(1000),
-		lazyDirFetchChildTimes: NewPopulation(1000)}
+		mountTablePath:    mountTablePath,
+		db:                db,
+		writableStore:     NewWritableStore(writablePath),
+		remoteRefFactory2: rrf2,
+		freezer:           NewFreezer(freezerPath, freezerKV, rrf2, config.chunkSize, monitor),
+		remoteRefFactory:  remoteRefFactory,
+		monitor:           monitor}
 
 	if rootBID != NABlock {
 		// we created a root node which pointed to a remote BID, create the lease for it.
@@ -410,6 +410,7 @@ func (d *DataStore) GetDirContents(ctx context.Context, id INode) ([]*DirEntryWi
 			entry := &DirEntryWithID{ID: n.ID,
 				DirEntry: DirEntry{
 					Name:    n.Name,
+					IsDirty: node.IsDirty,
 					IsDir:   node.IsDir,
 					Size:    size,
 					ModTime: mtime,
@@ -494,8 +495,9 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 			}
 
 			endTime := time.Now()
-			d.lazyDirBlockTimes.Add(int(endTime.Sub(startTime) / time.Millisecond))
+			d.monitor.AddedLazyDirBlock(ctx, startTime, endTime)
 		} else {
+			// no block, so list child objects
 			startTime := time.Now()
 			if node.RemoteSource == nil {
 				panic("No BID set nor remote source")
@@ -511,7 +513,10 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 				return err
 			}
 			endTime := time.Now()
-			d.lazyDirFetchChildTimes.Add(int(endTime.Sub(startTime) / time.Millisecond))
+			// elapsed := int(endTime.Sub(startTime) / time.Millisecond)
+
+			d.monitor.FetchedRemoteChildren(ctx, startTime, endTime)
+			// d.lazyDirFetchChildTimes.Add()
 		}
 
 		node.IsDeferredChildFetch = false
@@ -527,6 +532,20 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 
 	return nil
 }
+
+// func (d *DataStore) UploadFile(ctx context.Context, id INode, destPath string ) error {
+// 	err = d.db.view(func(tx RTx) error {
+// 		node, err = getNodeRepr(tx, inode)
+// 		if err != nil {
+// 			return err
+// 		}
+
+// 		node.get
+
+// 		return nil
+// 	})
+
+// }
 
 func (d *DataStore) AddRemoteGCS(ctx context.Context, parent INode, name string, bucket string, key string) (INode, error) {
 	var inode INode
@@ -1102,17 +1121,17 @@ func (ds *DataStore) SplitPath(ctx context.Context, fullPath string) (INode, str
 	return parent, components[len(components)-1], nil
 }
 
-func (ds *DataStore) PrintStats() {
-	if ps, ok := ds.freezer.(HasPrintStats); ok {
-		ps.PrintStats()
-	}
+// func (ds *DataStore) PrintStats() {
+// 	if ps, ok := ds.freezer.(HasPrintStats); ok {
+// 		ps.PrintStats()
+// 	}
 
-	p, ok := ds.lazyDirBlockTimes.Percentiles([]float32{50, 90, 95})
-	if ok {
-		fmt.Printf("Time taken fetching dirs from block (%d): %d, %d, %d\n", ds.lazyDirBlockTimes.Count(), p[0], p[1], p[2])
-	}
-	p, ok = ds.lazyDirFetchChildTimes.Percentiles([]float32{50, 90, 95})
-	if ok {
-		fmt.Printf("Time taken fetching dirs get child calls (%d): %d, %d, %d\n", ds.lazyDirFetchChildTimes.Count(), p[0], p[1], p[2])
-	}
-}
+// 	p, ok := ds.lazyDirBlockTimes.Percentiles([]float32{50, 90, 95})
+// 	if ok {
+// 		fmt.Printf("Time taken fetching dirs from block (%d): %d, %d, %d\n", ds.lazyDirBlockTimes.Count(), p[0], p[1], p[2])
+// 	}
+// 	p, ok = ds.lazyDirFetchChildTimes.Percentiles([]float32{50, 90, 95})
+// 	if ok {
+// 		fmt.Printf("Time taken fetching dirs get child calls (%d): %d, %d, %d\n", ds.lazyDirFetchChildTimes.Count(), p[0], p[1], p[2])
+// 	}
+// }

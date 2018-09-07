@@ -27,6 +27,7 @@ type FrozenRefImp struct {
 	BID      BlockID
 	remote   RemoteRef
 	filename string
+	fp       *os.File
 	offset   int64
 	size     int64
 	owner    *FreezerImp
@@ -46,6 +47,14 @@ func (w *FrozenRefImp) Seek(offset int64, whence int) (int64, error) {
 	} else {
 		panic("unknown value of whence")
 	}
+
+	if w.fp != nil {
+		_, err := w.fp.Seek(w.offset, 0)
+		if err != nil {
+			return 0, err
+		}
+	}
+
 	return w.offset, nil
 }
 
@@ -93,6 +102,7 @@ func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64)
 		}
 		endTime := time.Now()
 		w.owner.RemoteCopyEnd(id, endTime)
+		w.owner.RegionCopied(ctx, startTime, endTime, r.Start, r.End)
 		w.owner.requestLengthSamples.Add(int(r.End - r.Start))
 		w.owner.requestLatency.Add(int(endTime.Sub(startTime) / time.Millisecond))
 
@@ -117,19 +127,19 @@ func (w *FrozenRefImp) Read(ctx context.Context, dest []byte) (int, error) {
 		return 0, err
 	}
 
-	f, err := os.OpenFile(w.filename, os.O_RDONLY, 0755)
-	if err != nil {
-		return 0, err
+	if w.fp == nil {
+		w.fp, err = os.OpenFile(w.filename, os.O_RDONLY, 0755)
+		if err != nil {
+			return 0, err
+		}
+		_, err = w.fp.Seek(w.offset, 0)
+		if err != nil {
+			return 0, err
+		}
+		// defer f.Close()
 	}
 
-	defer f.Close()
-
-	_, err = f.Seek(w.offset, 0)
-	if err != nil {
-		return 0, err
-	}
-
-	n, err := f.Read(dest)
+	n, err := w.fp.Read(dest)
 	if err != nil {
 		return n, err
 	}
@@ -139,7 +149,10 @@ func (w *FrozenRefImp) Read(ctx context.Context, dest []byte) (int, error) {
 }
 
 func (w *FrozenRefImp) Release() {
-
+	if w.fp != nil {
+		log.Printf("Closing...")
+		w.fp.Close()
+	}
 }
 
 type FreezerImp struct {
@@ -158,9 +171,10 @@ type FreezerImp struct {
 
 	requestLatency       *Population
 	requestLengthSamples *Population
+	monitor              Monitor
 }
 
-func NewFreezer(path string, db KVStore, refFactory RemoteRefFactory2, chunkSize int) *FreezerImp {
+func NewFreezer(path string, db KVStore, refFactory RemoteRefFactory2, chunkSize int, monitor Monitor) *FreezerImp {
 	chunkPath := path + "/chunks"
 	err := os.MkdirAll(chunkPath, 0700)
 	if err != nil {
@@ -174,7 +188,8 @@ func NewFreezer(path string, db KVStore, refFactory RemoteRefFactory2, chunkSize
 		refFactory:           refFactory,
 		requestLengthSamples: NewPopulation(1000),
 		requestLatency:       NewPopulation(1000),
-		history:              make([]*CopyHistory, MaxHistoryLength)}
+		history:              make([]*CopyHistory, MaxHistoryLength),
+		monitor:              monitor}
 }
 
 func (f *FreezerImp) PrintStats() {
@@ -557,4 +572,8 @@ func (f *FreezerImp) AddBlock(ctx context.Context, BID BlockID, remoteRef Remote
 	}
 
 	return nil
+}
+
+func (f *FreezerImp) RegionCopied(ctx context.Context, startTime time.Time, endTime time.Time, start int64, end int64) {
+	f.monitor.RegionCopied(ctx, startTime, endTime, start, end)
 }

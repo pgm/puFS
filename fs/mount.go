@@ -86,9 +86,13 @@ func (c *Server) debug(msg string) {
 	fmt.Println(msg)
 }
 
+var FUSE_REQUEST *struct{} = new(struct{})
+
 func (c *Server) serve(r fuse.Request) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	ctx = context.WithValue(ctx, FUSE_REQUEST, r)
 
 	req := &sRequest{Request: r, cancel: cancel}
 
@@ -255,7 +259,7 @@ type Server struct {
 type sHandle struct {
 	inode    core.INode
 	readData []byte
-	ref      interface{}
+	ref      core.Reader
 }
 
 func (h *sHandle) Read(ctx context.Context, req *fuse.ReadRequest, res *fuse.ReadResponse) error {
@@ -307,6 +311,10 @@ func (h *sHandle) Write(ctx context.Context, req *fuse.WriteRequest, res *fuse.W
 }
 
 func (h *sHandle) Release() error {
+	if h.ref != nil {
+		h.ref.Release()
+		h.ref = nil
+	}
 	return nil
 }
 

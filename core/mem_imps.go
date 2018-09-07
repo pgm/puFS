@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/ioutil"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -242,21 +243,52 @@ func (r *RemoteRefFactoryMem) GetChildNodes(ctx context.Context, node *NodeRepr)
 }
 
 type MemRemoteRefFactory2 struct {
-	repo *RemoteRefFactoryMem
+	mutex               sync.Mutex
+	maxReadPosition     int64
+	blockIfMaxHit       bool
+	repo                *RemoteRefFactoryMem
+	blockCount          int
+	blockCountCond      *sync.Cond
+	maxReadPositionCond *sync.Cond
 }
 
 func NewMemRemoteRefFactory2(repo *RemoteRefFactoryMem) RemoteRefFactory2 {
-	return &MemRemoteRefFactory2{repo}
+	m := &MemRemoteRefFactory2{repo: repo, blockIfMaxHit: false, maxReadPosition: 1000000}
+	m.blockCountCond = sync.NewCond(m.mutex)
+	m.maxReadPositionCond = sync.NewCond(m.mutex)
+	return m
+}
+func (m *MemRemoteRefFactory2) getBlockedCount() int {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	return m.blockCount
+}
+
+func (m *MemRemoteRefFactory2) blockReadsAfter(offset int64) {
+	m.mutex.Lock()
+	m.blockIfMaxHit = true
+	m.blockReadsAfter = offset
+	m.maxReadPositionCond.Broadcast()
+	defer m.mutex.Unlock()
+}
+
+func (m *MemRemoteRefFactory2) errorReadsAfter(offset int64) {
+	m.mutex.Lock()
+	m.blockIfMaxHit = false
+	m.blockReadsAfter = offset
+	m.maxReadPositionCond.Broadcast()
+	defer m.mutex.Unlock()
 }
 
 func (m *MemRemoteRefFactory2) GetRef(source interface{}) RemoteRef {
 	BID := source.(BlockID)
-	return &MemRemoteRef{m.repo, BID}
+	return &MemRemoteRef{m, m.repo, BID}
 }
 
 type MemRemoteRef struct {
-	repo *RemoteRefFactoryMem
-	BID  BlockID
+	owner *MemRemoteRefFactory2
+	repo  *RemoteRefFactoryMem
+	BID   BlockID
 }
 
 func (m *MemRemoteRef) GetSize() int64 {
@@ -269,6 +301,22 @@ func (m *MemRemoteRef) GetSize() int64 {
 }
 
 func (m *MemRemoteRef) Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error {
+	// handle reads which tests have set to block to simulate various scenerios
+	m.owner.mutex.Lock()
+	if offset >= m.owner.maxReadPosition {
+		m.owner.blockCount++
+		m.owner.blockCountCond.Broadcast()
+		if !m.owner.blockIfMaxHit {
+			panic("hit max read")
+		}
+		for offset >= m.owner.maxReadPosition {
+			m.owner.maxReadPositionCond.Wait()
+		}
+		m.owner.blockCount--
+		m.owner.blockCountCond.Broadcast()
+	}
+	m.owner.mutex.Unlock()
+
 	key := GetBlockKey(m.repo.prefix, m.BID)
 	data, ok := m.repo.objects[key]
 	if !ok {

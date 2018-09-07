@@ -16,14 +16,18 @@ type Freezer interface {
 	IsPushed(BID BlockID) (bool, error)
 }
 
+type Releasable interface {
+	Release()
+}
+
 type Reader interface {
 	io.Seeker
+	Releasable
 	Read(ctx context.Context, p []byte) (n int, err error)
 }
 
 type FrozenRef interface {
 	Reader
-	Release()
 }
 
 type RemoteRef interface {
@@ -41,11 +45,11 @@ type HasPrintStats interface {
 type WritableRef interface {
 	Reader
 	io.Writer
-	Release()
 }
 
 type DirEntry struct {
 	Name    string
+	IsDirty bool
 	IsDir   bool
 	Size    int64
 	ModTime time.Time

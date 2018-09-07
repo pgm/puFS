@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -27,10 +28,27 @@ func createFile(require *require.Assertions, d *DataStore, parent INode, name st
 	return aID
 }
 
+type LoggingMonitor struct {
+	events []string
+}
+
+func (m *LoggingMonitor) AddedLazyDirBlock(ctx context.Context, startTime time.Time, endTime time.Time) {
+	m.events = append(m.events, "AddedLazyDirBlock")
+}
+
+func (m *LoggingMonitor) FetchedRemoteChildren(ctx context.Context, startTime time.Time, endTime time.Time) {
+	m.events = append(m.events, "FetchedRemoteChildren")
+}
+
+func (m *LoggingMonitor) RegionCopied(ctx context.Context, startTime time.Time, endTime time.Time, start int64, end int64) {
+	m.events = append(m.events, "RegionCopied")
+}
+
 func newDataStore(dir string) *DataStore {
 	repo := NewRemoteRefFactoryMem()
 	rrf2 := NewMemRemoteRefFactory2(repo)
 	ds, err := NewDataStore(dir, repo, rrf2, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	ds.monitor = &LoggingMonitor{}
 	if err != nil {
 		panic(err)
 	}
@@ -138,7 +156,6 @@ func TestMultipleWrite(t *testing.T) {
 	n, err = r.Read(ctx, buffer)
 	require.Nil(err)
 	require.Equal("da", string(buffer[:n]))
-
 }
 
 func TestWriteRead(t *testing.T) {
@@ -183,6 +200,44 @@ func TestFreezeFile(t *testing.T) {
 	require.Nil(err)
 	_, err = r.Read(ctx, buffer)
 	require.Equal("data", string(buffer))
+}
+
+func TestRemote(t *testing.T) {
+	require := require.New(t)
+	ctx := context.Background()
+
+	d := testDataStore()
+	monitor := &LoggingMonitor{}
+
+	// create a new filesystem with a remote root
+
+	// verify monitor has empty log
+	require.Equal(0, len(monitor.events))
+
+	// fetch contents
+	files, err := d.GetDirContents(ctx, RootINode)
+	require.Nil(err)
+
+	// expect single child file
+	require.Equal(1, len(files))
+
+	// now log at the logs and confirm that we logged a request to fetch children
+	require.Equal([]string{"FetchedRemoteChildren"}, monitor.events)
+
+	fileNode, err := d.GetNodeID(ctx, RootINode, "file")
+	require.Nil(err)
+
+	r, err := d.GetReadRef(ctx, fileNode)
+	require.Nil(err)
+
+	buffer := make([]byte, 1, 1)
+	n, err := r.Read(ctx, buffer)
+	require.Equal(1, n)
+
+	// verify we also get a request to copy data
+	require.Equal([]string{"FetchedRemoteChildren", "RegionCopied"}, monitor.events)
+
+	r.Release()
 }
 
 func TestFreezeDir(t *testing.T) {
@@ -316,3 +371,101 @@ func (n *NetworkClientImp) GetHTTPAttr(ctx context.Context, url string) (*HTTPAt
 
 	return &HTTPAttrs{ETag: resp.Header.Get("etag"), Size: resp.ContentLength}, nil
 }
+
+func createDataStoreForSeqReadTests() *DataStore {
+	dir, err := ioutil.TempDir("", "test")
+	if err != nil {
+		panic(err)
+	}
+
+	repo := NewRemoteRefFactoryMem()
+	rrf2 := NewMemRemoteRefFactory2(repo)
+
+	ds, err := NewDataStore(dir, repo, rrf2, NewMemStore([][]byte{ChunkStat}), NewMemStore([][]byte{ChildNodeBucket, NodeBucket}))
+	ds.monitor = &LoggingMonitor{}
+	if err != nil {
+		panic(err)
+	}
+
+	return ds, rrf2
+}
+
+// test the case where pending reads are automaticly kicked off and complete before we attempt to read
+func TestBackgroundReads(t *testing.T) {
+	ctx := context.Background()
+	require := require.New(t)
+	d, remote, monitor := createDataStoreForSeqReadTests()
+
+	// open file, which is a virtual 10 meg file
+	fileNode, err := d.GetNodeID(ctx, RootINode, "file")
+	require.Nil(err)
+
+	reader, err := d.GetReadRef(ctx, fileNode)
+	require.Nil(err)
+
+	// perform read, blocking any reads past 100
+	remote.blockReadsAfter(100)
+	buffer := make([]byte, 100)
+	n, err := reader.Read(ctx, buffer)
+	require.Nil(err)
+	require.Equal(100, n)
+
+	// verify that we have a background reader tying to read past 100
+	require.Equal(1, remote.getBlockedCount())
+
+	// release block, allow pending read to complete
+	remote.blockReadsAfter(200)
+	monitor.waitForPendingToComplete()
+
+	// assert no more reads
+	remote.errorReadsAfter(0)
+
+	// read which should be taken from already completed pending read
+	n, err := reader.Read(ctx, buffer)
+	require.Nil(err)
+	require.Equal(100, n)
+}
+
+// test the case where pending read is kicked off but does not complete before we need data
+// func TestBackgroundBlockingReads() {
+// 	ctx := context.Background()
+// 	require := require.New(t)
+// 	d, remote := createDataStoreForSeqReadTests()
+
+// 	// open file, which is a virtual 10 meg file
+// 	fileNode, err := d.GetNodeID(ctx, RootINode, "file")
+// 	require.Nil(err)
+
+// 	reader, err := d.GetReadRef(ctx, fileNode)
+// 	require.Nil(err)
+
+// 	// perform read, blocking any reads past 100
+// 	remote.blockReadsAfter(100)
+// 	buffer := make([]byte, 100)
+// 	n, err := reader.Read(ctx, buffer)
+// 	require.Nil(err)
+// 	require.Equal(100, n)
+
+// 	// verify that we have a background reader tying to read past 100
+// 	require.Equal(1, remote.getBlockedCount())
+
+// 	blocksOkay := false
+
+// 	go (func() {
+// 		// wait for read to block
+// 		remote.waitForBlockedReadsIs(1)
+
+// 		// now release the block to allow pending read to complete
+// 		remote.blockReadsAfter(200)
+
+// 		blocksOkay = true
+// 	})()
+
+// 	// read should initially block and then complete
+// 	n, err := reader.Read(ctx, buffer)
+// 	require.Nil(err)
+// 	require.Equal(100, n)
+
+// 	// make sure our go routine which checked blocking behavior did everything right
+// 	require.True(blocksOkay)
+// }
