@@ -110,3 +110,16 @@ func (m *Mask) Add(start int64, end int64) {
 		m.addDisjoint(r.Start, r.End)
 	}
 }
+
+/* returns the min start which is greater or equal to the provided position */
+func (m *Mask) GetNextStart(position int64, maxValue int64) int64 {
+	minStart := maxValue
+	for _, r := range m.regions {
+		if position <= r.Start {
+			if minStart > r.Start {
+				minStart = r.Start
+			}
+		}
+	}
+	return minStart
+}

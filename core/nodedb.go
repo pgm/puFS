@@ -305,6 +305,10 @@ func assertValidDirWillMutate(tx RWTx, id INode) error {
 				return err
 			}
 		}
+	} else {
+		if node.BID != NABlock {
+			panic("BID should have been NA")
+		}
 	}
 
 	return nil
@@ -653,7 +657,8 @@ func addRemoteURL(tx RWTx, parentINode INode, inode INode, url string, etag stri
 
 func addWritable(tx RWTx, parentINode INode, inode INode, filename string) error {
 	return putNodeRepr(tx, inode, &NodeRepr{
-		ParentINode: parentINode, IsDirty: true,
+		ParentINode:       parentINode,
+		IsDirty:           true,
 		IsDir:             false,
 		LocalWritablePath: filename})
 }

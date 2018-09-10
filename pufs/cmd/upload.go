@@ -16,7 +16,6 @@ package cmd
 
 import (
 	"context"
-	"io"
 	"log"
 
 	"github.com/pgm/sply2/core"
@@ -32,11 +31,12 @@ func uploadTree(ctx context.Context, ds *core.DataStore, inode core.INode, desti
 			if entry.IsDir {
 				uploadTree(ctx, ds, entry.ID, destPath)
 			} else {
-				var reader io.Reader
-				reader, err = ds.GetReadRef(ctx, entry.ID)
-				if err != nil {
-					break
-				}
+				panic("unimp")
+				// var reader io.Reader
+				// reader, err = ds.GetReadRef(ctx, entry.ID)
+				// if err != nil {
+				// 	break
+				// }
 				// open object destPath
 				// copy between streams
 			}

@@ -934,6 +934,7 @@ func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) 
 			return nil, err
 		}
 
+		node.IsDirty = false
 		node.BID = newBlock.BID
 		node.Size = newBlock.Size
 		node.ModTime = newBlock.ModTime
@@ -952,6 +953,7 @@ func freeze(tempDir string, freezer Freezer, db *INodeDB, tx RWTx, inode INode) 
 
 	newBlock, err := freezer.AddFile(node.LocalWritablePath)
 
+	node.IsDirty = false
 	node.BID = newBlock.BID
 	node.Size = newBlock.Size
 	node.ModTime = newBlock.ModTime

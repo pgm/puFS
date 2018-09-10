@@ -19,9 +19,25 @@ import (
 
 var ChunkStat []byte = []byte("ChunkStat")
 
-// func NewFrozenRef(name string) FrozenRef {
-// 	return &FrozenRefImp{filename: name}
-// }
+type recentReads struct {
+	index   int
+	offsets []int64
+}
+
+func (r *recentReads) recordReadEnd(offset int64) {
+	if cap(r.offsets) > len(r.offsets) {
+		r.offsets = append(r.offsets, offset)
+	}
+	r.offsets[r.index] = offset
+	r.index = (r.index + 1) % cap(r.offsets)
+}
+
+type Regions struct {
+	populated   *region.Mask
+	pending     region.PendingReads
+	recentReads recentReads
+	size        int64
+}
 
 type FrozenRefImp struct {
 	BID      BlockID
@@ -31,11 +47,52 @@ type FrozenRefImp struct {
 	offset   int64
 	size     int64
 	owner    *FreezerImp
+	//	regionMap *RegionMAp
 }
 
 type BlockInfo struct {
 	Source interface{}
 }
+
+type NewBlock struct {
+	BID     BlockID
+	Size    int64
+	ModTime time.Time
+}
+
+type FreezerImp struct {
+	path      string
+	db        KVStore
+	chunkSize int
+
+	refFactory RemoteRefFactory2
+
+	mutex   sync.Mutex
+	regions map[BlockID]*Regions
+
+	historyMutext   sync.Mutex
+	history         []*CopyHistory
+	nextHistorySlot int
+
+	requestLatency       *Population
+	requestLengthSamples *Population
+	monitor              Monitor
+
+	pendingReads region.PendingReads
+
+	maxBackgroundTransfer int64
+}
+
+type CopyHistory struct {
+	BID       BlockID
+	Start     int64
+	End       int64
+	StartTime time.Time
+	EndTime   time.Time
+	Complete  bool
+}
+
+const MaxHistoryLength = 32
 
 func (w *FrozenRefImp) Seek(offset int64, whence int) (int64, error) {
 	if whence == os.SEEK_SET {
@@ -63,7 +120,7 @@ func divideIntoChunks(chunkSize int, x []region.Region) []region.Region {
 	return x
 }
 
-func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64) error {
+func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64, size int64) error {
 	// align the read region with ChunkSize
 	chunkSize := w.owner.chunkSize
 
@@ -77,10 +134,12 @@ func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64)
 	if end > w.size {
 		end = w.size
 	}
-	missingRegions, err := w.owner.getInvalidRegions(w.BID, start, end)
+
+	missingRegions, err := w.owner.getMissingRegions(w.BID, start, end, size)
 	if err != nil {
 		return err
 	}
+
 	missingRegions = divideIntoChunks(chunkSize, missingRegions)
 
 	f, err := os.OpenFile(w.filename, os.O_RDWR, 0755)
@@ -88,6 +147,7 @@ func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64)
 		return err
 	}
 
+	copiedNewData := false
 	for _, r := range missingRegions {
 		_, err = f.Seek(r.Start, 0)
 		if err != nil {
@@ -96,33 +156,29 @@ func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64)
 
 		startTime := time.Now()
 		id := w.owner.RemoteCopyStart(w.BID, r.Start, r.End, startTime)
-		err = w.remote.Copy(ctx, r.Start, r.End-r.Start, f)
+		err = w.owner.CopyFromRemote(ctx, w.BID, w.remote, r.Start, r.End, f)
 		if err != nil {
 			return err
 		}
 		endTime := time.Now()
 		w.owner.RemoteCopyEnd(id, endTime)
-		w.owner.RegionCopied(ctx, startTime, endTime, r.Start, r.End)
 		w.owner.requestLengthSamples.Add(int(r.End - r.Start))
 		w.owner.requestLatency.Add(int(endTime.Sub(startTime) / time.Millisecond))
 
 		w.owner.addValidRegion(w.BID, r.Start, r.End)
+		copiedNewData = true
+	}
+
+	if copiedNewData {
+		// only update the read end for new data that we were forced to pull
+		w.owner.recordReadEnd(w.BID, origEnd)
 	}
 
 	return nil
 }
 
-// // fmt.Printf("Performing copy of 0-%d\n", remoteRef.GetSize())
-// // copy with size = -1 to copy entire contents
-// err = remoteRef.Copy(ctx, 0, -1, fi)
-// // fmt.Printf("err from copy %s\n", err)
-// if err != nil {
-// 	return err
-// }
-// // s, err = os.Stat(filename)
-
 func (w *FrozenRefImp) Read(ctx context.Context, dest []byte) (int, error) {
-	err := w.ensurePulled(ctx, w.offset, w.offset+int64(len(dest)))
+	err := w.ensurePulled(ctx, w.offset, w.offset+int64(len(dest)), w.size)
 	if err != nil {
 		return 0, err
 	}
@@ -155,25 +211,6 @@ func (w *FrozenRefImp) Release() {
 	}
 }
 
-type FreezerImp struct {
-	path      string
-	db        KVStore
-	chunkSize int
-
-	refFactory RemoteRefFactory2
-
-	mutex        sync.Mutex
-	blockRegions map[BlockID]*region.Mask
-
-	historyMutext   sync.Mutex
-	history         []*CopyHistory
-	nextHistorySlot int
-
-	requestLatency       *Population
-	requestLengthSamples *Population
-	monitor              Monitor
-}
-
 func NewFreezer(path string, db KVStore, refFactory RemoteRefFactory2, chunkSize int, monitor Monitor) *FreezerImp {
 	chunkPath := path + "/chunks"
 	err := os.MkdirAll(chunkPath, 0700)
@@ -184,7 +221,7 @@ func NewFreezer(path string, db KVStore, refFactory RemoteRefFactory2, chunkSize
 	return &FreezerImp{path: chunkPath,
 		db:                   db,
 		chunkSize:            chunkSize,
-		blockRegions:         make(map[BlockID]*region.Mask),
+		regions:              make(map[BlockID]*Regions),
 		refFactory:           refFactory,
 		requestLengthSamples: NewPopulation(1000),
 		requestLatency:       NewPopulation(1000),
@@ -194,7 +231,7 @@ func NewFreezer(path string, db KVStore, refFactory RemoteRefFactory2, chunkSize
 
 func (f *FreezerImp) PrintStats() {
 	f.mutex.Lock()
-	blocksWithRegionsCached := len(f.blockRegions)
+	blocksWithRegionsCached := len(f.regions)
 	f.mutex.Unlock()
 
 	fmt.Printf("Blocks with region maps cached: %d\n", blocksWithRegionsCached)
@@ -234,17 +271,6 @@ func (f *FreezerImp) PrintStats() {
 	f.historyMutext.Unlock()
 }
 
-type CopyHistory struct {
-	BID       BlockID
-	Start     int64
-	End       int64
-	StartTime time.Time
-	EndTime   time.Time
-	Complete  bool
-}
-
-const MaxHistoryLength = 32
-
 func (f *FreezerImp) RemoteCopyStart(BID BlockID, Start int64, End int64, startTime time.Time) *CopyHistory {
 	entry := &CopyHistory{BID: BID, Start: Start, End: End, StartTime: startTime, Complete: false}
 	f.historyMutext.Lock()
@@ -269,6 +295,7 @@ func (f *FreezerImp) getPath(BID BlockID) string {
 	filename := fmt.Sprintf("%s/%s", f.path, base64.URLEncoding.EncodeToString(BID[:]))
 	return filename
 }
+
 func (f *FreezerImp) getRemote(BID BlockID) (RemoteRef, error) {
 	var source interface{}
 
@@ -291,6 +318,7 @@ func (f *FreezerImp) getRemote(BID BlockID) (RemoteRef, error) {
 
 	return f.refFactory.GetRef(source), nil
 }
+
 func (f *FreezerImp) GetRef(BID BlockID) (FrozenRef, error) {
 	if BID == NABlock {
 		panic("Cannot get ref for NA block")
@@ -356,12 +384,19 @@ func (f *FreezerImp) hasChunk(BID BlockID) (bool, error) {
 	return value != nil, nil
 }
 
-func (f *FreezerImp) ensureRegionsCached(BID BlockID) (*region.Mask, error) {
-	mask := f.blockRegions[BID]
-	if mask == nil {
+func (f *FreezerImp) loadRegions(BID BlockID, size int64) (*Regions, error) {
+	regionMap := f.regions[BID]
+
+	if regionMap == nil {
 		regionLog := f.getPath(BID) + ".regions"
 
-		mask = region.New()
+		mask := region.New()
+		regionMap = &Regions{
+			size:      size,
+			populated: mask,
+			pending:   region.NewPendingReads(),
+			recentReads: recentReads{
+				offsets: make([]int64, 0, 200)}}
 
 		fp, err := os.Open(regionLog)
 
@@ -395,10 +430,19 @@ func (f *FreezerImp) ensureRegionsCached(BID BlockID) (*region.Mask, error) {
 			return nil, err
 		}
 
-		f.blockRegions[BID] = mask
+		f.regions[BID] = regionMap
 	}
+	return regionMap, nil
+}
 
-	return mask, nil
+func (f *FreezerImp) getPopulatedRegions(BID BlockID) *region.Mask {
+	regions := f.regions[BID]
+	return regions.populated
+}
+
+func (f *FreezerImp) recordReadEnd(BID BlockID, end int64) {
+	regions := f.regions[BID]
+	regions.recentReads.recordReadEnd(end)
 }
 
 func (f *FreezerImp) addValidRegion(BID BlockID, start int64, end int64) error {
@@ -407,10 +451,7 @@ func (f *FreezerImp) addValidRegion(BID BlockID, start int64, end int64) error {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
-	mask, err := f.ensureRegionsCached(BID)
-	if err != nil {
-		return err
-	}
+	mask := f.getPopulatedRegions(BID)
 
 	fp, err := os.OpenFile(regionLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0777)
 	if err != nil {
@@ -430,20 +471,55 @@ func (f *FreezerImp) addValidRegion(BID BlockID, start int64, end int64) error {
 	return nil
 }
 
-func (f *FreezerImp) getInvalidRegions(BID BlockID, start int64, end int64) ([]region.Region, error) {
+type freezerMarker struct {
+	BID     BlockID
+	owner   *FreezerImp
+	regions *Regions
+}
+
+func (f *freezerMarker) GetPendingStats(regionStart int64) *region.PendingStats {
+	f.owner.mutex.Lock()
+	offsets := f.regions.recentReads.offsets
+	maxReadPosition := int64(0)
+	for _, offset := range offsets {
+		if offset > maxReadPosition && offset <= regionStart {
+			maxReadPosition = offset
+		}
+	}
+	nextRegionStart := f.regions.populated.GetNextStart(regionStart, f.regions.size)
+	f.owner.mutex.Unlock()
+
+	return &region.PendingStats{
+		MaxReadPosition: maxReadPosition,
+		NextRegionStart: nextRegionStart}
+}
+
+func (f *freezerMarker) AddRegion(start int64, end int64) {
+	f.owner.addValidRegion(f.BID, start, end)
+}
+
+func (f *FreezerImp) CopyFromRemote(ctx context.Context, BID BlockID, remote RemoteRef, start int64, end int64, writer io.Writer) error {
+	f.mutex.Lock()
+	regions := f.regions[BID]
+	maxEnd := regions.populated.GetNextStart(end, regions.size)
+	f.mutex.Unlock()
+
+	marker := &freezerMarker{owner: f, BID: BID, regions: regions}
+	callStatus := regions.pending.StartBackgroundCopy(ctx, marker, remote, start, end, maxEnd, 1024*10, f.maxBackgroundTransfer, writer)
+	return callStatus.Wait()
+}
+
+func (f *FreezerImp) getMissingRegions(BID BlockID, start int64, end int64, size int64) ([]region.Region, error) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
-	mask, err := f.ensureRegionsCached(BID)
+	regions, err := f.loadRegions(BID, size)
 	if err != nil {
 		return nil, err
 	}
 
-	return mask.GetMissing(start, end), nil
+	return regions.populated.GetMissing(start, end), nil
 }
-
-// func (f *FreezerImp) getRemoteRef(BID BlockID) RemoteRef {
-// }
 
 func (f *FreezerImp) writeChunkInfo(BID BlockID, info *BlockInfo) error {
 	buffer := bytes.NewBuffer(make([]byte, 0, 1000))
@@ -503,12 +579,6 @@ func (f *FreezerImp) IsPushed(BID BlockID) (bool, error) {
 	return pushed, err
 }
 
-type NewBlock struct {
-	BID     BlockID
-	Size    int64
-	ModTime time.Time
-}
-
 func (f *FreezerImp) AddFile(path string) (*NewBlock, error) {
 	BID, err := computeHash(path)
 	if err != nil {
@@ -527,6 +597,14 @@ func (f *FreezerImp) AddFile(path string) (*NewBlock, error) {
 	if err != nil {
 		panic("File disappeared after move or could not stat")
 	}
+
+	// make sure we've populated the region cache before calling addValidRegion
+	f.mutex.Lock()
+	_, err = f.loadRegions(BID, st.Size())
+	if err != nil {
+		panic("Could not initialize regions for file")
+	}
+	f.mutex.Unlock()
 
 	err = f.addValidRegion(BID, 0, st.Size())
 	if err != nil {
@@ -572,8 +650,4 @@ func (f *FreezerImp) AddBlock(ctx context.Context, BID BlockID, remoteRef Remote
 	}
 
 	return nil
-}
-
-func (f *FreezerImp) RegionCopied(ctx context.Context, startTime time.Time, endTime time.Time, start int64, end int64) {
-	f.monitor.RegionCopied(ctx, startTime, endTime, start, end)
 }
