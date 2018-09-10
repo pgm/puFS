@@ -450,9 +450,9 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 	if err != nil {
 		return err
 	}
-	log.Printf("loadLazyChildren %d %v %v", id, node.IsDir, node.IsDeferredChildFetch)
+	// log.Printf("loadLazyChildren %d %v %v", id, node.IsDir, node.IsDeferredChildFetch)
 	if node.IsDir && node.IsDeferredChildFetch {
-		log.Printf("fetch needed")
+		// log.Printf("fetch needed")
 		if node.BID != NABlock {
 			startTime := time.Now()
 
@@ -507,7 +507,7 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 			if err != nil {
 				return err
 			}
-			log.Printf("fetching")
+			// log.Printf("fetching")
 			err = d.db.addRemoteLazyChildren(tx, id, nodes)
 			if err != nil {
 				return err
