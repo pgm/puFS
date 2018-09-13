@@ -45,7 +45,9 @@ func Mount(dir string, ds *core.DataStore) {
 			s.reqs[rID] = nil
 			s.meta.Unlock()
 			if err != nil {
-				fmt.Printf("Req done: %v, err=%v\n", req, err)
+				if _, ok := req.(*fuse.LookupRequest); !ok {
+					fmt.Printf("Req done: %v, err=%v\n", req, err)
+				}
 			}
 		}()
 	}
@@ -181,7 +183,7 @@ func (c *Server) serve(r fuse.Request) error {
 			err = fuse.EINTR
 		}
 		fuseErr := mapError(err)
-		fmt.Printf("mapped %v -> %v\n", err, fuseErr)
+		//		fmt.Printf("mapped %v -> %v\n", err, fuseErr)
 		r.RespondError(fuseErr)
 	}
 
@@ -263,6 +265,7 @@ type sHandle struct {
 }
 
 func (h *sHandle) Read(ctx context.Context, req *fuse.ReadRequest, res *fuse.ReadResponse) error {
+
 	if h.ref == nil {
 		return fuse.EIO
 	}
@@ -551,9 +554,9 @@ func (c *Server) getattr(ctx context.Context, inode core.INode, attr *fuse.Attr)
 		attr.Mode = 0775 | os.ModeDir // all dirs are read/write
 	} else {
 		if nattr.BID != core.NABlock {
-			attr.Mode = 0664 // read/write if not frozen
-		} else {
 			attr.Mode = 0444 // read-only
+		} else {
+			attr.Mode = 0664 // read/write if not frozen
 		}
 	}
 	attr.Nlink = 1              // number of links (usually 1)

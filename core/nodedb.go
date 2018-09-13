@@ -554,6 +554,30 @@ func addBIDMount(tx RWTx, parentINode INode, inode INode, BID BlockID) error {
 		IsDeferredChildFetch: true})
 }
 
+func makeGSCHashBlockID(bucket string, key string, generation int64) BlockID {
+	var BID BlockID
+	hashID := Sha256.Sum([]byte(fmt.Sprintf("%s/%s:%d", bucket, key, generation)))
+	copy(BID[:], hashID)
+	return BID
+}
+
+func (db *INodeDB) UpdateIsRemoteGCS(tx RWTx, inode INode, bucket string, key string, generation int64, size int64, ModTime time.Time) error {
+	BID := makeGSCHashBlockID(bucket, key, generation)
+	node, err := getNodeRepr(tx, inode)
+	if err != nil {
+		return err
+	}
+	node.IsDirty = false
+	node.RemoteSource = &GCSObjectSource{
+		Bucket:     bucket,
+		Key:        key,
+		Generation: generation,
+		Size:       size}
+	node.BID = BID
+
+	return putNodeRepr(tx, inode, node)
+}
+
 func (db *INodeDB) AddRemoteGCS(tx RWTx, parent INode, name string, bucket string, key string, generation int64, size int64, ModTime time.Time, isDir bool) (INode, error) {
 	err := assertValidDirWillMutate(tx, parent)
 	if err != nil {
@@ -583,8 +607,7 @@ func addRemoteGCS(tx RWTx, parentINode INode, inode INode, bucket string, key st
 	if isDir {
 		BID = NABlock
 	} else {
-		hashID := Sha256.Sum([]byte(fmt.Sprintf("%s/%s:%d", bucket, key, generation)))
-		copy(BID[:], hashID)
+		BID = makeGSCHashBlockID(bucket, key, generation)
 	}
 	return putNodeRepr(tx, inode, &NodeRepr{
 		ParentINode: parentINode,

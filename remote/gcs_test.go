@@ -158,7 +158,8 @@ func TestDatastoreWithGCSRemote(t *testing.T) {
 	dir, err := ioutil.TempDir("", "gcs_test")
 	require.Nil(err)
 
-	ds := core.NewDataStore(dir, f, f, core.NewMemStore([][]byte{core.ChunkStat}), core.NewMemStore([][]byte{core.ChildNodeBucket, core.NodeBucket}))
+	ds, err := core.NewDataStore(dir, f, f, core.NewMemStore([][]byte{core.ChunkStat}), core.NewMemStore([][]byte{core.ChildNodeBucket, core.NodeBucket}))
+	require.Nil(err)
 	ds.SetClients(f)
 
 	inode, err := ds.AddRemoteGCS(ctx, core.RootINode, "gcs", bucketName, "sample")
@@ -191,7 +192,10 @@ func newFullDataStore() *core.DataStore {
 		panic(err)
 	}
 
-	ds := core.NewDataStore(dir, f, f, core.NewMemStore([][]byte{core.ChunkStat}), core.NewMemStore([][]byte{core.ChildNodeBucket, core.NodeBucket}))
+	ds, err := core.NewDataStore(dir, f, f, core.NewMemStore([][]byte{core.ChunkStat}), core.NewMemStore([][]byte{core.ChildNodeBucket, core.NodeBucket}))
+	if err != nil {
+		panic(err)
+	}
 	ds.SetClients(f)
 
 	return ds
@@ -254,8 +258,10 @@ func TestMount(t *testing.T) {
 	err = ds1.Push(ctx, core.RootINode, "test-mount")
 	require.Nil(err)
 
-	err = ds2.MountByLabel(ctx, core.RootINode, "test-mount")
+	err = ds2.MountByLabel(ctx, core.RootINode, "mounted", "test-mount")
 	require.Nil(err)
+
+	// TODO: fix here
 
 	folderID2, err := ds2.GetNodeID(ctx, core.RootINode, "folder")
 	require.Nil(err)

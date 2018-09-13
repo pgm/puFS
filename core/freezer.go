@@ -25,9 +25,6 @@ type recentReads struct {
 }
 
 func (r *recentReads) recordReadEnd(offset int64) {
-	if cap(r.offsets) > len(r.offsets) {
-		r.offsets = append(r.offsets, offset)
-	}
 	r.offsets[r.index] = offset
 	r.index = (r.index + 1) % cap(r.offsets)
 }
@@ -81,6 +78,9 @@ type FreezerImp struct {
 	pendingReads region.PendingReads
 
 	maxBackgroundTransfer int64
+
+	// used for heuristic detection/warning for file handle exhaustion
+	maxFd uint
 }
 
 type CopyHistory struct {
@@ -147,7 +147,10 @@ func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64,
 		return err
 	}
 
-	copiedNewData := false
+	// copiedNewData := false
+	if len(missingRegions) > 0 {
+		log.Printf("Freezer (%p): Check of %d-%d (orig: %d-%d) found %d missing regions", ctx, start, end, origStart, origEnd, len(missingRegions))
+	}
 	for _, r := range missingRegions {
 		_, err = f.Seek(r.Start, 0)
 		if err != nil {
@@ -156,23 +159,26 @@ func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64,
 
 		startTime := time.Now()
 		id := w.owner.RemoteCopyStart(w.BID, r.Start, r.End, startTime)
+		log.Printf("Freezer (%p): Started copy of %d-%d (orig: %d-%d)", ctx, r.Start, r.End, origStart, origEnd)
 		err = w.owner.CopyFromRemote(ctx, w.BID, w.remote, r.Start, r.End, f)
 		if err != nil {
 			return err
 		}
 		endTime := time.Now()
+		log.Printf("Freezer (%p): Finished copy of %d-%d (orig: %d-%d)", ctx, r.Start, r.End, origStart, origEnd)
 		w.owner.RemoteCopyEnd(id, endTime)
 		w.owner.requestLengthSamples.Add(int(r.End - r.Start))
 		w.owner.requestLatency.Add(int(endTime.Sub(startTime) / time.Millisecond))
 
 		w.owner.addValidRegion(w.BID, r.Start, r.End)
-		copiedNewData = true
+		// copiedNewData = true
 	}
 
-	if copiedNewData {
-		// only update the read end for new data that we were forced to pull
-		w.owner.recordReadEnd(w.BID, origEnd)
-	}
+	// if copiedNewData {
+	// only update the read end for new data that we were forced to pull
+	w.owner.recordReadEnd(w.BID, origEnd)
+	// log.Printf("Freezer (%p): updating recordReadEnd", ctx)
+	// }
 
 	return nil
 }
@@ -188,6 +194,13 @@ func (w *FrozenRefImp) Read(ctx context.Context, dest []byte) (int, error) {
 		if err != nil {
 			return 0, err
 		}
+
+		// newFd := uint(w.fp.Fd())
+		// if newFd > w.owner.maxFd {
+		// 	log.Printf("Got new max FD: %u", newFd)
+		// 	w.owner.maxFd = newFd
+		// }
+
 		_, err = w.fp.Seek(w.offset, 0)
 		if err != nil {
 			return 0, err
@@ -219,14 +232,15 @@ func NewFreezer(path string, db KVStore, refFactory RemoteRefFactory2, chunkSize
 	}
 
 	return &FreezerImp{path: chunkPath,
-		db:                   db,
-		chunkSize:            chunkSize,
-		regions:              make(map[BlockID]*Regions),
-		refFactory:           refFactory,
-		requestLengthSamples: NewPopulation(1000),
-		requestLatency:       NewPopulation(1000),
-		history:              make([]*CopyHistory, MaxHistoryLength),
-		monitor:              monitor}
+		db:                    db,
+		chunkSize:             chunkSize,
+		regions:               make(map[BlockID]*Regions),
+		refFactory:            refFactory,
+		requestLengthSamples:  NewPopulation(1000),
+		requestLatency:        NewPopulation(1000),
+		history:               make([]*CopyHistory, MaxHistoryLength),
+		monitor:               monitor,
+		maxBackgroundTransfer: 1024 * 1024 * 5}
 }
 
 func (f *FreezerImp) PrintStats() {
@@ -396,7 +410,7 @@ func (f *FreezerImp) loadRegions(BID BlockID, size int64) (*Regions, error) {
 			populated: mask,
 			pending:   region.NewPendingReads(),
 			recentReads: recentReads{
-				offsets: make([]int64, 0, 200)}}
+				offsets: make([]int64, 20)}}
 
 		fp, err := os.Open(regionLog)
 
@@ -479,22 +493,32 @@ type freezerMarker struct {
 
 func (f *freezerMarker) GetPendingStats(regionStart int64) *region.PendingStats {
 	f.owner.mutex.Lock()
-	offsets := f.regions.recentReads.offsets
-	maxReadPosition := int64(0)
-	for _, offset := range offsets {
-		if offset > maxReadPosition && offset <= regionStart {
-			maxReadPosition = offset
-		}
-	}
+	// offsets := f.regions.recentReads.offsets
+	// maxReadPosition := int64(0)
+	// for _, offset := range offsets {
+	// 	if offset > maxReadPosition && offset <= regionStart {
+	// 		maxReadPosition = offset
+	// 	}
+	// }
+
 	nextRegionStart := f.regions.populated.GetNextStart(regionStart, f.regions.size)
+	missingRegionsAtStart := f.regions.populated.GetMissing(regionStart, regionStart+1)
+	populatedAtPosition := len(missingRegionsAtStart) == 0
+	// if len(missingRegionsAtStart) != 0 {
+	// 	log.Printf("GetPendingStats at %d, maxReadPosition=%v, missing: %d-%d", regionStart, offsets, missingRegionsAtStart[0].Start, missingRegionsAtStart[0].End)
+	// } else {
+	// 	log.Printf("GetPendingStats at %d, maxReadPosition=%v, no missing", regionStart, offsets)
+	// }
+
 	f.owner.mutex.Unlock()
 
 	return &region.PendingStats{
-		MaxReadPosition: maxReadPosition,
-		NextRegionStart: nextRegionStart}
+		NextRegionStart:     nextRegionStart,
+		PopulatedAtPosition: populatedAtPosition}
 }
 
 func (f *freezerMarker) AddRegion(start int64, end int64) {
+	log.Printf("AddRegion(%d, %d)", start, end)
 	f.owner.addValidRegion(f.BID, start, end)
 }
 
@@ -505,7 +529,7 @@ func (f *FreezerImp) CopyFromRemote(ctx context.Context, BID BlockID, remote Rem
 	f.mutex.Unlock()
 
 	marker := &freezerMarker{owner: f, BID: BID, regions: regions}
-	callStatus := regions.pending.StartBackgroundCopy(ctx, marker, remote, start, end, maxEnd, 1024*10, f.maxBackgroundTransfer, writer)
+	callStatus := regions.pending.StartBackgroundCopy(ctx, marker, remote, start, end, maxEnd, 1024*100, f.maxBackgroundTransfer, writer)
 	return callStatus.Wait()
 }
 

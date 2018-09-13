@@ -547,6 +547,22 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 
 // }
 
+func (d *DataStore) UpdateIsRemoteGCS(inode INode, bucket string, key string, generation int64, size int64, modTime time.Time) error {
+
+	err := d.db.update(func(tx RWTx) error {
+		//UpdateIsRemoteGCS(tx RWTx, inode INode, bucket string, key string, generation int64, size int64, ModTime time.Time) error {
+		err := d.db.UpdateIsRemoteGCS(tx, inode, bucket, key, generation, size, modTime)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	return err
+
+}
+
 func (d *DataStore) AddRemoteGCS(ctx context.Context, parent INode, name string, bucket string, key string) (INode, error) {
 	var inode INode
 

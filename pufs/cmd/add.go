@@ -26,6 +26,14 @@ import (
 
 var GCSUrlExp *regexp.Regexp = regexp.MustCompile("^gs://([^/]+)/(.*)$")
 
+func parseGCS(url string) (bucket string, key string, ok bool) {
+	gcsmatch := GCSUrlExp.FindStringSubmatch(url)
+	if gcsmatch != nil {
+		return gcsmatch[1], gcsmatch[2], true
+	}
+	return "", "", false
+}
+
 // addCmd represents the add command
 var addCmd = &cobra.Command{
 	Use:   "add [repo] [url]",

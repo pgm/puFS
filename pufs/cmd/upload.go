@@ -16,29 +16,83 @@ package cmd
 
 import (
 	"context"
+	"io"
 	"log"
 
+	"cloud.google.com/go/storage"
 	"github.com/pgm/sply2/core"
+	"google.golang.org/api/option"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
-func uploadTree(ctx context.Context, ds *core.DataStore, inode core.INode, destination string) {
+type ReadWithContext struct {
+	ctx    context.Context
+	reader core.Reader
+}
+
+func (r *ReadWithContext) Read(buffer []byte) (int, error) {
+	return r.reader.Read(r.ctx, buffer)
+}
+
+func upload(ctx context.Context, client *storage.Client, reader core.Reader, bucket string, key string, size int64) (int64, error) {
+	b := client.Bucket(bucket)
+	objHandle := b.Object(key)
+
+	writer := objHandle.NewWriter(ctx)
+	n, err := io.Copy(writer, &ReadWithContext{ctx, reader})
+	if err != nil {
+		return 0, err
+	}
+
+	if n != size {
+		log.Fatalf("Expected %d written, expected %d bytes", n, size)
+	}
+
+	err = writer.Close()
+	if err != nil {
+		return 0, err
+	}
+
+	attrs, err := objHandle.Attrs(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	return attrs.Generation, nil
+}
+
+func uploadTree(ctx context.Context, client *storage.Client, ds *core.DataStore, inode core.INode, dirPath string, bucket string, keyPrefix string) {
 	entries, err := ds.GetDirContents(ctx, inode)
 	for _, entry := range entries {
 		if entry.IsDirty {
-			destPath := destination + "/" + entry.Name
-			if entry.IsDir {
-				uploadTree(ctx, ds, entry.ID, destPath)
+			var path string
+			if dirPath == "" {
+				path = entry.Name
 			} else {
-				panic("unimp")
-				// var reader io.Reader
-				// reader, err = ds.GetReadRef(ctx, entry.ID)
-				// if err != nil {
-				// 	break
-				// }
-				// open object destPath
-				// copy between streams
+				path = dirPath + "/" + entry.Name
+			}
+			if entry.IsDir {
+				if entry.Name != "." && entry.Name != ".." {
+					log.Printf("Checking directory %s", path)
+					uploadTree(ctx, client, ds, entry.ID, path, bucket, keyPrefix)
+				}
+			} else {
+				key := keyPrefix + "/" + path
+
+				reader, err := ds.GetReadRef(ctx, entry.ID)
+				if err != nil {
+					log.Fatalf("Could not open %s: %s", path, err)
+				}
+				generation, err := upload(ctx, client, reader, bucket, key, entry.Size)
+				if err != nil {
+					log.Fatalf("Could not upload %s: %s", path, err)
+				}
+				log.Printf("Uploading %s -> gs://%s/%s", path, bucket, key)
+				reader.Release()
+
+				ds.UpdateIsRemoteGCS(entry.ID, bucket, key, generation, entry.Size, entry.ModTime)
 			}
 		}
 		if err != nil {
@@ -64,11 +118,23 @@ to quickly create a Cobra application.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		repoPath := args[0]
 		destination := args[1]
+		credentialsPath := viper.GetString("credentials")
+
+		bucket, keyPrefix, ok := parseGCS(destination)
+		if !ok {
+			log.Fatalf("Could not parse GCS path: %s", destination)
+		}
 
 		ds := NewDataStore(repoPath, false)
 		ctx := context.Background()
 
-		uploadTree(ctx, ds, core.RootINode, destination)
+		client, err := storage.NewClient(ctx, option.WithServiceAccountFile(credentialsPath))
+		if err != nil {
+			log.Fatalf("Failed to create client: %v", err)
+		}
+
+		//inode core.INode, dirPath string, destination string
+		uploadTree(ctx, client, ds, core.RootINode, "", bucket, keyPrefix)
 
 		ds.Close()
 	},

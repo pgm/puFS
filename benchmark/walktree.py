@@ -22,7 +22,7 @@ def time_read(filename, read_size):
     return end-start
 
 def benchmark(root, read_size):
-    print("time to walk wide: {:.3e}".format( time_walk(os.path.join(root, "widedir")) ))
+    #print("time to walk wide: {:.3e}".format( time_walk(os.path.join(root, "widedir")) ))
     print("time to read 1KB: {:.3e}".format( time_read(os.path.join(root, "1kb"), read_size)))
     print("time to read 1MB: {:.3e}".format( time_read(os.path.join(root, "1mb"), read_size)))
     print("time to read 50MB: {:.3e}".format( time_read(os.path.join(root, "50mb"), read_size)))
