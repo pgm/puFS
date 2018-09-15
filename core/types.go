@@ -14,6 +14,8 @@ type Freezer interface {
 	AddBlock(ctx context.Context, BID BlockID, remoteRef RemoteRef) error
 	AddFile(path string) (*NewBlock, error)
 	IsPushed(BID BlockID) (bool, error)
+	GetBlockStats(BID BlockID, Size int64) (*BlockStats, error)
+	GetActiveTransferStatus(timeUnit time.Duration) []*BlockTransferStatus
 }
 
 type Releasable interface {
@@ -62,6 +64,19 @@ type DirEntry struct {
 type DirEntryWithID struct {
 	DirEntry
 	ID INode
+}
+
+type ExtendedDirEntry struct {
+	DirEntryWithID
+	BlockStats
+}
+
+type BlockStats struct {
+	// the number of populated regions in this file
+	PopulatedRegionCount int
+
+	// the total number of populated bytes in this file
+	PopulatedSize int64
 }
 
 type Dir struct {

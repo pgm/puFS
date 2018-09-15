@@ -243,6 +243,22 @@ func NewFreezer(path string, db KVStore, refFactory RemoteRefFactory2, chunkSize
 		maxBackgroundTransfer: 1024 * 1024 * 5}
 }
 
+func (f *FreezerImp) GetBlockStats(BID BlockID, Size int64) (*BlockStats, error) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	regions, err := f.loadRegions(BID, Size)
+	if err != nil {
+		return nil, err
+	}
+
+	stats := BlockStats{
+		PopulatedSize:        regions.populated.TotalLength(),
+		PopulatedRegionCount: regions.populated.Count()}
+
+	return &stats, nil
+}
+
 func (f *FreezerImp) PrintStats() {
 	f.mutex.Lock()
 	blocksWithRegionsCached := len(f.regions)
@@ -465,7 +481,11 @@ func (f *FreezerImp) addValidRegion(BID BlockID, start int64, end int64) error {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 
-	mask := f.getPopulatedRegions(BID)
+	regions := f.regions[BID]
+	if end > regions.size {
+		log.Fatalf("Attempted to add region (%d-%d) for to %d byte long block", start, end, regions.size)
+	}
+	mask := regions.populated
 
 	fp, err := os.OpenFile(regionLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0777)
 	if err != nil {
@@ -515,6 +535,28 @@ func (f *freezerMarker) GetPendingStats(regionStart int64) *region.PendingStats 
 	return &region.PendingStats{
 		NextRegionStart:     nextRegionStart,
 		PopulatedAtPosition: populatedAtPosition}
+}
+
+type BlockTransferStatus struct {
+	BID       BlockID
+	Transfers []*region.PendingReadsStatus
+}
+
+func (f *FreezerImp) GetActiveTransferStatus(timeUnit time.Duration) []*BlockTransferStatus {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	blockTransfers := make([]*BlockTransferStatus, 0, len(f.regions))
+
+	for bid, region := range f.regions {
+		pendingStatus := region.pending.GetStatus(timeUnit)
+		if len(pendingStatus) > 0 {
+			bt := &BlockTransferStatus{BID: bid, Transfers: pendingStatus}
+			blockTransfers = append(blockTransfers, bt)
+		}
+	}
+
+	return blockTransfers
 }
 
 func (f *freezerMarker) AddRegion(start int64, end int64) {

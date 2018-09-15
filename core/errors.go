@@ -19,3 +19,5 @@ var NotWritableErr = errors.New("File is not writable")
 
 var InvalidRepoErr = errors.New("No such repo at that path")
 var RepoExistsErr = errors.New("Cannot create repo as directory already exists")
+
+//var NoSuchBlockErr = errors.New("Block does not have any caching info")

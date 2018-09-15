@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"sync"
+	"time"
 )
 
 type CallStatus interface {
@@ -19,6 +21,7 @@ type PendingReads interface {
 	// no such regions, then return immediately
 	WaitForRegion(start int64, end int64)
 	StartBackgroundCopy(ctx context.Context, marker Marker, copier Copier, start int64, end int64, maxEnd int64, minUncommited int64, maxWindowSize int64, writer io.Writer) CallStatus
+	GetStatus(timeUnit time.Duration) []*PendingReadsStatus
 }
 
 type callStatus struct {
@@ -57,10 +60,40 @@ type PendingReadsImp struct {
 	writers   []*MarkingWriter
 }
 
+type PendingReadsStatus struct {
+	StartTime     time.Time
+	Start         int64
+	PendingStart  int64
+	PendingEnd    int64
+	Offset        int64
+	MaxPendingEnd int64
+	TransferRate  float32
+}
+
 func NewPendingReads() PendingReads {
 	p := &PendingReadsImp{}
 	p.flushCond = sync.NewCond(&p.mutex)
 	return p
+}
+
+func (p *PendingReadsImp) GetStatus(timeUnit time.Duration) []*PendingReadsStatus {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	status := make([]*PendingReadsStatus, len(p.writers))
+	for i, w := range p.writers {
+		s := &PendingReadsStatus{
+			StartTime:     w.startTime,
+			Start:         w.originalStart,
+			PendingStart:  w.pendingStart,
+			PendingEnd:    w.pendingEnd,
+			Offset:        w.offset,
+			MaxPendingEnd: w.maxPendingEnd,
+			TransferRate:  w.offsetHistory.GetRate(timeUnit)}
+		status[i] = s
+	}
+
+	return status
 }
 
 func (p *PendingReadsImp) WaitForRegion(start int64, end int64) {
@@ -108,12 +141,14 @@ type waitingCaller struct {
 }
 
 type MarkingWriter struct {
-	owner      *PendingReadsImp
-	active     bool
-	cancelFunc context.CancelFunc
-	marker     Marker
-	writer     io.Writer
-	offset     int64
+	owner         *PendingReadsImp
+	startTime     time.Time
+	originalStart int64
+	active        bool
+	cancelFunc    context.CancelFunc
+	marker        Marker
+	writer        io.Writer
+	offset        int64
 
 	// how many bytes past lastMaxReadMark do we want to keep reading?
 	readheadSize int64
@@ -129,6 +164,58 @@ type MarkingWriter struct {
 	minUncommited int64
 
 	callers []*waitingCaller
+
+	offsetHistory OffsetHistory
+}
+
+type OffsetTimepoint struct {
+	offset    int64
+	timestamp time.Time
+}
+
+type OffsetHistory struct {
+	// circular buffer
+	history    [256]OffsetTimepoint
+	startIndex int
+	endIndex   int
+}
+
+func (h *OffsetHistory) next(i int) int {
+	i++
+	if i >= len(h.history) {
+		return 0
+	}
+	return i
+}
+func (h *OffsetHistory) prev(i int) int {
+	i--
+	if i < 0 {
+		return len(h.history) - 1
+	}
+	return i
+}
+
+func (h *OffsetHistory) Record(offset int64) {
+	nextIndex := h.next(h.endIndex)
+
+	// if we are in danger of wrapping around bump start pos
+	if nextIndex == h.startIndex {
+		h.startIndex = h.next(h.startIndex)
+	}
+
+	h.history[nextIndex] = OffsetTimepoint{offset: offset, timestamp: time.Now()}
+	h.endIndex = nextIndex
+}
+
+func (h *OffsetHistory) GetRate(divisor time.Duration) float32 {
+	if h.startIndex == h.endIndex {
+		return float32(math.NaN())
+	}
+
+	start := h.history[h.startIndex]
+	end := h.history[h.prev(h.endIndex)]
+
+	return float32(end.offset-start.offset) / float32(end.timestamp.Sub(start.timestamp)) / float32(divisor)
 }
 
 type Copier interface {
@@ -179,6 +266,8 @@ func (p *PendingReadsImp) StartBackgroundCopy(rootCtx context.Context, marker Ma
 		marker:        marker,
 		writer:        writer,
 		offset:        start,
+		originalStart: start,
+		startTime:     time.Now(),
 		pendingStart:  start,
 		pendingEnd:    end,
 		readheadSize:  readheadSize,
@@ -353,6 +442,7 @@ func (m *MarkingWriter) Write(buffer []byte) (int, error) {
 	pendingStart := m.pendingStart
 	pendingEnd := m.pendingEnd
 	minUncommited := m.minUncommited
+	m.offsetHistory.Record(offset)
 	m.owner.mutex.Unlock()
 
 	log.Printf("Wrote: offset=%d, pendingStart=%d, pendingEnd=%d, minUncommited=%d", offset, pendingStart, pendingEnd, minUncommited)

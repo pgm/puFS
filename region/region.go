@@ -111,6 +111,18 @@ func (m *Mask) Add(start int64, end int64) {
 	}
 }
 
+func (m *Mask) TotalLength() int64 {
+	total := int64(0)
+	for _, r := range m.regions {
+		total += r.End - r.Start
+	}
+	return total
+}
+
+func (m *Mask) Count() int {
+	return len(m.regions)
+}
+
 /* returns the min start which is greater or equal to the provided position */
 func (m *Mask) GetNextStart(position int64, maxValue int64) int64 {
 	minStart := maxValue

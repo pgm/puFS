@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
@@ -555,9 +556,19 @@ func addBIDMount(tx RWTx, parentINode INode, inode INode, BID BlockID) error {
 }
 
 func makeGSCHashBlockID(bucket string, key string, generation int64) BlockID {
+
 	var BID BlockID
-	hashID := Sha256.Sum([]byte(fmt.Sprintf("%s/%s:%d", bucket, key, generation)))
-	copy(BID[:], hashID)
+	keyStr := fmt.Sprintf("%s/%s:%d", bucket, key, generation)
+	hashID := sha256.Sum256([]byte(keyStr))
+	if len(hashID) != sha256.Size {
+		panic("what?")
+	}
+	copy(BID[:], hashID[:])
+
+	hashedStr := base64.RawStdEncoding.EncodeToString(BID[:])
+	hashedStr2 := base64.RawStdEncoding.EncodeToString(hashID[:])
+	fmt.Printf("makeGSCHashBlockID key=%s BID=%s, hashedStr=%s, hashedStr2=%s\n", keyStr, BID, hashedStr, hashedStr2)
+
 	return BID
 }
 
@@ -647,12 +658,10 @@ func (db *INodeDB) AddRemoteURL(tx RWTx, parent INode, name string, url string, 
 	return id, nil
 }
 
-var Sha256 = sha256.New()
-
 func addRemoteURL(tx RWTx, parentINode INode, inode INode, url string, etag string, size int64, modTime time.Time) error {
-	hashID := Sha256.Sum([]byte(url + etag))
+	hashID := sha256.Sum256([]byte(url + etag))
 	var BID BlockID
-	copy(BID[:], hashID)
+	copy(BID[:], hashID[:])
 	return putNodeRepr(tx, inode, &NodeRepr{
 		ParentINode:  parentINode,
 		IsDirty:      false,

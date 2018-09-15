@@ -373,9 +373,10 @@ func (d *DataStore) GetNodeID(ctx context.Context, parent INode, name string) (I
 // 	return names, nil
 // }
 
-func (d *DataStore) GetDirContents(ctx context.Context, id INode) ([]*DirEntryWithID, error) {
+type dirEntryCallback func(*DirEntryWithID) error
+
+func (d *DataStore) walkDirContents(ctx context.Context, id INode, callback dirEntryCallback) error {
 	var err error
-	var entries []*DirEntryWithID
 
 	err = d.db.update(func(tx RWTx) error {
 		err = d.loadLazyChildren(ctx, tx, id)
@@ -389,7 +390,6 @@ func (d *DataStore) GetDirContents(ctx context.Context, id INode) ([]*DirEntryWi
 			return err
 		}
 
-		entries = make([]*DirEntryWithID, 0, len(names))
 		for _, n := range names {
 			var node *NodeRepr
 			node, err = getNodeRepr(tx, n.ID)
@@ -409,21 +409,62 @@ func (d *DataStore) GetDirContents(ctx context.Context, id INode) ([]*DirEntryWi
 
 			entry := &DirEntryWithID{ID: n.ID,
 				DirEntry: DirEntry{
-					Name:    n.Name,
-					IsDirty: node.IsDirty,
-					IsDir:   node.IsDir,
-					Size:    size,
-					ModTime: mtime,
-
-					BID: node.BID,
-
+					Name:         n.Name,
+					IsDirty:      node.IsDirty,
+					IsDir:        node.IsDir,
+					Size:         size,
+					ModTime:      mtime,
+					BID:          node.BID,
 					RemoteSource: node.RemoteSource}}
-			entries = append(entries, entry)
+
+			err := callback(entry)
+			if err != nil {
+				return err
+			}
 		}
 
 		return nil
 	})
 
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (d *DataStore) GetExtendedDirContents(ctx context.Context, id INode) ([]*ExtendedDirEntry, error) {
+	entries := make([]*ExtendedDirEntry, 0, 100)
+	callback := func(entry *DirEntryWithID) error {
+		blockStats, err := d.freezer.GetBlockStats(entry.BID, entry.Size)
+		if err != nil {
+			return err
+		}
+
+		xEntry := &ExtendedDirEntry{
+			DirEntryWithID: *entry,
+			BlockStats:     *blockStats}
+		entries = append(entries, xEntry)
+		return nil
+	}
+
+	err := d.walkDirContents(ctx, id, callback)
+	if err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
+func (d *DataStore) GetDirContents(ctx context.Context, id INode) ([]*DirEntryWithID, error) {
+	entries := make([]*DirEntryWithID, 0, 100)
+
+	callback := func(entry *DirEntryWithID) error {
+		entries = append(entries, entry)
+		return nil
+	}
+
+	err := d.walkDirContents(ctx, id, callback)
 	if err != nil {
 		return nil, err
 	}
@@ -1139,17 +1180,41 @@ func (ds *DataStore) SplitPath(ctx context.Context, fullPath string) (INode, str
 	return parent, components[len(components)-1], nil
 }
 
-// func (ds *DataStore) PrintStats() {
-// 	if ps, ok := ds.freezer.(HasPrintStats); ok {
-// 		ps.PrintStats()
-// 	}
+func (ds *DataStore) GetINodeForPath(ctx context.Context, Path string) (INode, error) {
+	inode := INode(RootINode)
+	pathComponents := strings.Split(Path, "/")
+	for i := 0; i < len(pathComponents)-1; i++ {
+		name := pathComponents[i]
+		nextNode, err := ds.GetNodeID(ctx, inode, name)
+		if err != nil {
+			return InvalidINode, err
+		}
+		inode = nextNode
+	}
 
-// 	p, ok := ds.lazyDirBlockTimes.Percentiles([]float32{50, 90, 95})
-// 	if ok {
-// 		fmt.Printf("Time taken fetching dirs from block (%d): %d, %d, %d\n", ds.lazyDirBlockTimes.Count(), p[0], p[1], p[2])
-// 	}
-// 	p, ok = ds.lazyDirFetchChildTimes.Percentiles([]float32{50, 90, 95})
-// 	if ok {
-// 		fmt.Printf("Time taken fetching dirs get child calls (%d): %d, %d, %d\n", ds.lazyDirFetchChildTimes.Count(), p[0], p[1], p[2])
-// 	}
-// }
+	return inode, nil
+}
+
+func (ds *DataStore) PrintStats() {
+	fmt.Printf("PrintStats\n")
+	now := time.Now()
+	transfers := ds.freezer.GetActiveTransferStatus(time.Second)
+	for _, t := range transfers {
+		for _, pt := range t.Transfers {
+			secondsAgo := float32(now.Sub(pt.StartTime)) / float32(time.Second)
+			fmt.Printf("Transfer started %.1f seconds ago: %d-%d (now @ %d), %.2f kb/s\n", secondsAgo, pt.Start, pt.MaxPendingEnd, pt.Offset, pt.TransferRate/1024)
+		}
+	}
+	// if ps, ok := ds.freezer.(HasPrintStats); ok {
+	// 	ps.PrintStats()
+	// }
+
+	// p, ok := ds.lazyDirBlockTimes.Percentiles([]float32{50, 90, 95})
+	// if ok {
+	// 	fmt.Printf("Time taken fetching dirs from block (%d): %d, %d, %d\n", ds.lazyDirBlockTimes.Count(), p[0], p[1], p[2])
+	// }
+	// p, ok = ds.lazyDirFetchChildTimes.Percentiles([]float32{50, 90, 95})
+	// if ok {
+	// 	fmt.Printf("Time taken fetching dirs get child calls (%d): %d, %d, %d\n", ds.lazyDirFetchChildTimes.Count(), p[0], p[1], p[2])
+	// }
+}
