@@ -17,9 +17,11 @@ package cmd
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"path"
 	"strings"
 	"text/tabwriter"
 
@@ -63,26 +65,56 @@ func fmtNum(v int64) string {
 	}
 }
 
+var NotValidPufsPathErr = errors.New("Was not a path under a repo nor mountpoint")
+
+func findPufsRoot(longPath string) (infoPath string, remainingPath string, err error) {
+	remainingPath = "."
+	p := longPath
+	for {
+		canidatePath := path.Join(p, PufsInfoFilename)
+		_, err := os.Stat(canidatePath)
+		if os.ErrNotExist != err {
+			return canidatePath, remainingPath, nil
+		}
+
+		nextDir := path.Dir(p)
+		if nextDir == p {
+			return "", "", NotValidPufsPathErr
+		}
+
+		p = nextDir
+
+		remainingPath = path.Join(path.Base(p), remainingPath)
+	}
+}
+
 // lsCmd represents the ls command
 var lsCmd = &cobra.Command{
 	Use:   "ls",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
+	Short: "list files with pufs-specific extended information",
+	// 	Long: `A longer description that spans multiple lines and likely contains examples
+	// and usage of using your command. For example:
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
-	Args: cobra.ExactArgs(2),
+	// Cobra is a CLI library for Go that empowers applications.
+	// This application is a tool to generate the needed files
+	// to quickly create a Cobra application.`,
+	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		repoPath := args[0]
-		dirPath := args[1]
+		dirPath := args[0]
+
+		infoPath, remainingPath, err := findPufsRoot(dirPath)
+		if err != nil {
+			log.Fatalf("Could not find pufs repo: %s", err)
+		}
+
+		repoPath := path.Dir(infoPath)
+
 		//		fmt.Println("ls called")
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0) //tabwriter.AlignRight)
 
 		ds := NewDataStore(repoPath, false)
 		ctx := context.Background()
-		inode, err := ds.GetINodeForPath(ctx, dirPath)
+		inode, err := ds.GetINodeForPath(ctx, remainingPath)
 		if err != nil {
 			log.Fatalf("Could not look up %s: %s", dirPath, err)
 		}

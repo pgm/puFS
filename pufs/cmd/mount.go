@@ -22,6 +22,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const PufsInfoFilename = ".pufs-info"
+
 var PUFSUrlExp *regexp.Regexp = regexp.MustCompile("^pufs:///(.*)$")
 
 // mountCmd represents the mount command
@@ -99,13 +101,19 @@ func NewDataStore(dir string, createIfMissing bool, options ...NewDataStoreOptio
 
 	var err error
 	if _, err = os.Stat(dir); os.IsNotExist(err) {
-		log.Printf("err=%v", err)
 		if createIfMissing {
 			err = os.MkdirAll(dir, 0700)
 			if err != nil {
-				log.Printf("bail 1err=%v", err)
-				log.Fatal(err)
+				log.Fatalf("Could not create %s: %s", dir, err)
 			}
+
+			pufsInfoPath := path.Join(dir, PufsInfoFilename)
+			f, err := os.Create(pufsInfoPath)
+			if err != nil {
+				log.Fatalf("Could not create %s: %s", pufsInfoPath, err)
+			}
+			f.WriteString("type=repo\n")
+			defer f.Close()
 		} else {
 			log.Fatalf("No repo at %s", dir)
 		}
