@@ -147,10 +147,10 @@ func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64,
 		return err
 	}
 
-	// copiedNewData := false
-	if len(missingRegions) > 0 {
-		log.Printf("Freezer (%p): Check of %d-%d (orig: %d-%d) found %d missing regions", ctx, start, end, origStart, origEnd, len(missingRegions))
-	}
+	// if len(missingRegions) > 0 {
+	// 	log.Printf("Freezer (%p): Check of %d-%d (orig: %d-%d) found %d missing regions", ctx, start, end, origStart, origEnd, len(missingRegions))
+	// }
+
 	for _, r := range missingRegions {
 		_, err = f.Seek(r.Start, 0)
 		if err != nil {
@@ -159,13 +159,13 @@ func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64,
 
 		startTime := time.Now()
 		id := w.owner.RemoteCopyStart(w.BID, r.Start, r.End, startTime)
-		log.Printf("Freezer (%p): Started copy of %d-%d (orig: %d-%d)", ctx, r.Start, r.End, origStart, origEnd)
+		//		log.Printf("Freezer (%p): Started copy of %d-%d (orig: %d-%d)", ctx, r.Start, r.End, origStart, origEnd)
 		err = w.owner.CopyFromRemote(ctx, w.BID, w.remote, r.Start, r.End, f)
 		if err != nil {
 			return err
 		}
 		endTime := time.Now()
-		log.Printf("Freezer (%p): Finished copy of %d-%d (orig: %d-%d)", ctx, r.Start, r.End, origStart, origEnd)
+		//log.Printf("Freezer (%p): Finished copy of %d-%d (orig: %d-%d)", ctx, r.Start, r.End, origStart, origEnd)
 		w.owner.RemoteCopyEnd(id, endTime)
 		w.owner.requestLengthSamples.Add(int(r.End - r.Start))
 		w.owner.requestLatency.Add(int(endTime.Sub(startTime) / time.Millisecond))
@@ -560,7 +560,7 @@ func (f *FreezerImp) GetActiveTransferStatus(timeUnit time.Duration) []*BlockTra
 }
 
 func (f *freezerMarker) AddRegion(start int64, end int64) {
-	log.Printf("AddRegion(%d, %d)", start, end)
+	//	log.Printf("AddRegion(%d, %d)", start, end)
 	f.owner.addValidRegion(f.BID, start, end)
 }
 
