@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -478,6 +479,128 @@ func makeReader(ctx context.Context,
 	return &refReader{ctx, fr}
 }
 
+func (d *DataStore) needsLoadLazyChildren(ctx context.Context, tx RTx, id INode) (func() (func(tx RWTx) error, error), error) {
+	node, err := getNodeRepr(tx, id)
+	if err != nil {
+		return nil, err
+	}
+	// log.Printf("loadLazyChildren %d %v %v", id, node.IsDir, node.IsDeferredChildFetch)
+	if node.IsDir && node.IsDeferredChildFetch {
+		callback := func() (func(tx RWTx) error, error) {
+			return d.loadLazyChildrenOutsideTransaction(ctx, id, node)
+		}
+		return callback, nil
+	}
+	return nil, nil
+}
+
+func (d *DataStore) loadLazyChildrenOutsideTransaction(ctx context.Context, id INode, node *NodeRepr) (func(tx RWTx) error, error) {
+	updateParent := func(tx RWTx) error {
+		node.IsDeferredChildFetch = false
+		return putNodeRepr(tx, id, node)
+	}
+
+	if node.BID != NABlock {
+		// dir listing is stored in an immutable block
+		startTime := time.Now()
+
+		remoteSource, err := d.remoteRefFactory.GetBlockSource(ctx, node.BID)
+		if err != nil {
+			return nil, err
+		}
+		if remoteSource == nil {
+			panic("got a nil source for block")
+		}
+		fmt.Printf("remoteSource=%v\n", remoteSource)
+
+		remoteRef := d.remoteRefFactory2.GetRef(remoteSource)
+		if err != nil {
+			return nil, err
+		}
+		err = d.freezer.AddBlock(ctx, node.BID, remoteRef)
+		if err != nil {
+			return nil, err
+		}
+		fr, err := d.freezer.GetRef(node.BID)
+		if err != nil {
+			return nil, err
+		}
+
+		buffer, err := ioutil.ReadAll(makeReader(ctx, fr))
+		// buffer := make([]byte, node.Size)
+		// _, err = fr.Read(buffer)
+		dec := gob.NewDecoder(bytes.NewReader(buffer))
+
+		var dir Dir
+		err = dec.Decode(&dir)
+		if err != nil {
+			panic(err)
+		}
+
+		withinTransaction := func(tx RWTx) error {
+			node, err = getNodeRepr(tx, id)
+			if err != nil {
+				return err
+			}
+
+			// double check that someone else didn't beat us
+			if node.IsDir && node.IsDeferredChildFetch {
+				err = d.db.addBlockLazyChildren(tx, id, dir.Entries)
+				if err != nil {
+					return err
+				}
+
+				updateParent(tx)
+
+				endTime := time.Now()
+				d.monitor.AddedLazyDirBlock(ctx, startTime, endTime)
+			}
+
+			return nil
+		}
+
+		return withinTransaction, nil
+	} else {
+		// no block, so list child objects based on the remote source
+		startTime := time.Now()
+		if node.RemoteSource == nil {
+			panic("No BID set nor remote source")
+		}
+		remote := d.remoteRefFactory2.GetRef(node.RemoteSource)
+		nodes, err := remote.GetChildNodes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		// log.Printf("fetching")
+
+		withinTransaction := func(tx RWTx) error {
+			node, err = getNodeRepr(tx, id)
+			if err != nil {
+				return err
+			}
+
+			// double check that someone else didn't beat us
+			if node.IsDir && node.IsDeferredChildFetch {
+				err := d.db.addRemoteLazyChildren(tx, id, nodes)
+				if err != nil {
+					return err
+				}
+
+				updateParent(tx)
+
+				endTime := time.Now()
+				// elapsed := int(endTime.Sub(startTime) / time.Millisecond)
+
+				d.monitor.FetchedRemoteChildren(ctx, startTime, endTime)
+			}
+			return nil
+		}
+		return withinTransaction, nil
+		// d.lazyDirFetchChildTimes.Add()
+	}
+
+}
+
 func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) error {
 	node, err := getNodeRepr(tx, id)
 	if err != nil {
@@ -485,78 +608,6 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 	}
 	// log.Printf("loadLazyChildren %d %v %v", id, node.IsDir, node.IsDeferredChildFetch)
 	if node.IsDir && node.IsDeferredChildFetch {
-		if node.BID != NABlock {
-			// dir listing is stored in an immutable block
-			startTime := time.Now()
-
-			remoteSource, err := d.remoteRefFactory.GetBlockSource(ctx, node.BID)
-			if err != nil {
-				return err
-			}
-			if remoteSource == nil {
-				panic("got a nil source for block")
-			}
-			fmt.Printf("remoteSource=%v\n", remoteSource)
-
-			remoteRef := d.remoteRefFactory2.GetRef(remoteSource)
-			if err != nil {
-				return err
-			}
-			err = d.freezer.AddBlock(ctx, node.BID, remoteRef)
-			if err != nil {
-				return err
-			}
-			fr, err := d.freezer.GetRef(node.BID)
-			if err != nil {
-				return err
-			}
-
-			buffer, err := ioutil.ReadAll(makeReader(ctx, fr))
-			// buffer := make([]byte, node.Size)
-			// _, err = fr.Read(buffer)
-			dec := gob.NewDecoder(bytes.NewReader(buffer))
-
-			var dir Dir
-			err = dec.Decode(&dir)
-			if err != nil {
-				panic(err)
-			}
-
-			err = d.db.addBlockLazyChildren(tx, id, dir.Entries)
-			if err != nil {
-				return err
-			}
-
-			endTime := time.Now()
-			d.monitor.AddedLazyDirBlock(ctx, startTime, endTime)
-		} else {
-			// no block, so list child objects based on the remote source
-			startTime := time.Now()
-			if node.RemoteSource == nil {
-				panic("No BID set nor remote source")
-			}
-			remote := d.remoteRefFactory2.GetRef(node.RemoteSource)
-			nodes, err := remote.GetChildNodes(ctx)
-			if err != nil {
-				return err
-			}
-			// log.Printf("fetching")
-			err = d.db.addRemoteLazyChildren(tx, id, nodes)
-			if err != nil {
-				return err
-			}
-			endTime := time.Now()
-			// elapsed := int(endTime.Sub(startTime) / time.Millisecond)
-
-			d.monitor.FetchedRemoteChildren(ctx, startTime, endTime)
-			// d.lazyDirFetchChildTimes.Add()
-		}
-
-		node.IsDeferredChildFetch = false
-		err = putNodeRepr(tx, id, node)
-		if err != nil {
-			return err
-		}
 	}
 
 	if err != nil {
@@ -603,13 +654,27 @@ func (d *DataStore) readAfterLoadLazyChildren(ctx context.Context, parent INode,
 	return d.updateAfterMultiLoadLazyChildren(ctx, []INode{parent}, updateWrapper)
 }
 
+var NeedsLoadLazyChildrenError = errors.New("NeedsLoadLazyChildren")
+
 func (d *DataStore) updateAfterMultiLoadLazyChildren(ctx context.Context, parents []INode, update func(tx RWTx) error) error {
+	var outsideTxCallbacks [2]func() (func(tx RWTx) error, error)
+	needsLoadCount := 0
+
 	err := d.db.update(func(tx RWTx) error {
 		for _, parent := range parents {
-			err := d.loadLazyChildren(ctx, tx, parent)
+			outsideTxCallback, err := d.needsLoadLazyChildren(ctx, tx, parent)
 			if err != nil {
 				return err
 			}
+
+			if outsideTxCallback != nil {
+				outsideTxCallbacks[needsLoadCount] = outsideTxCallback
+				needsLoadCount++
+			}
+		}
+
+		if needsLoadCount > 0 {
+			return NeedsLoadLazyChildrenError
 		}
 
 		err := update(tx)
@@ -619,6 +684,36 @@ func (d *DataStore) updateAfterMultiLoadLazyChildren(ctx context.Context, parent
 
 		return nil
 	})
+
+	// if we had to abort our initial attempt because of missing children, fetch the needed data outside of
+	// the lock and then try again
+
+	if err == NeedsLoadLazyChildrenError {
+		var insideTxCallbacks [2]func(tx RWTx) error
+
+		for i := 0; i < needsLoadCount; i++ {
+			insideTxCallback, err := outsideTxCallbacks[i]()
+			if err != nil {
+				return err
+			}
+			insideTxCallbacks[i] = insideTxCallback
+		}
+		err = d.db.update(func(tx RWTx) error {
+			for i := 0; i < needsLoadCount; i++ {
+				err := insideTxCallbacks[i](tx)
+				if err != nil {
+					return err
+				}
+			}
+
+			err := update(tx)
+			if err != nil {
+				return err
+			}
+
+			return nil
+		})
+	}
 
 	return err
 }
