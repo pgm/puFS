@@ -72,8 +72,9 @@ func findPufsRoot(longPath string) (infoPath string, remainingPath string, err e
 	p := longPath
 	for {
 		canidatePath := path.Join(p, PufsInfoFilename)
+		log.Printf("Checking %s", canidatePath)
 		_, err := os.Stat(canidatePath)
-		if os.ErrNotExist != err {
+		if err == nil {
 			return canidatePath, remainingPath, nil
 		}
 
@@ -82,9 +83,9 @@ func findPufsRoot(longPath string) (infoPath string, remainingPath string, err e
 			return "", "", NotValidPufsPathErr
 		}
 
-		p = nextDir
-
+		log.Printf("path.Join(path.Base(%s), %s)", p, remainingPath)
 		remainingPath = path.Join(path.Base(p), remainingPath)
+		p = nextDir
 	}
 }
 
