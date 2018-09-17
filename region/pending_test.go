@@ -218,7 +218,8 @@ func TestBasicPendingSequence(t *testing.T) {
 	// expect AddRegion is called once we've finished writing > 5 bytes
 	expectAddRegion := history.Expect("AddRegion")
 	// Also expect these calls should be made and will always return a single value
-	history.Expect("GetPendingStats").AndThenReturn(&PendingStats{false, 0, 1000})
+	history.Expect("GetPendingStats").AndThenReturn(&PendingStats{PopulatedAtPosition: false,
+		NextRegionStart: 1000})
 	j.Join()
 
 	buf = make([]byte, 10)
@@ -299,7 +300,8 @@ func TestJoinExistingRequest(t *testing.T) {
 	// expect AddRegion is called once we've finished writing > 5 bytes
 	history.Expect("AddRegion").AndThenReturn(nil)
 	// Also expect these calls should be made and will always return a single value
-	history.Expect("GetPendingStats").AndThenReturn(&PendingStats{false, 0, 1000})
+	history.Expect("GetPendingStats").AndThenReturn(&PendingStats{PopulatedAtPosition: false,
+		NextRegionStart: 1000})
 	j.Join()
 
 	buf = make([]byte, 10)

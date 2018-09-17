@@ -339,11 +339,7 @@ func (d *DataStore) GetNodeID(ctx context.Context, parent INode, name string) (I
 		return InvalidINode, err
 	}
 
-	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(ctx, tx, parent)
-		if err != nil {
-			return err
-		}
+	err = d.readAfterLoadLazyChildren(ctx, parent, func(tx RTx) error {
 
 		inode, err = d.db.GetNodeID(tx, parent, name)
 		if err != nil {
@@ -378,11 +374,7 @@ type dirEntryCallback func(*DirEntryWithID) error
 func (d *DataStore) walkDirContents(ctx context.Context, id INode, callback dirEntryCallback) error {
 	var err error
 
-	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(ctx, tx, id)
-		if err != nil {
-			return err
-		}
+	err = d.readAfterLoadLazyChildren(ctx, id, func(tx RTx) error {
 
 		var names []NameINode
 		names, err = d.db.GetDirContents(tx, id, true)
@@ -493,8 +485,8 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 	}
 	// log.Printf("loadLazyChildren %d %v %v", id, node.IsDir, node.IsDeferredChildFetch)
 	if node.IsDir && node.IsDeferredChildFetch {
-		// log.Printf("fetch needed")
 		if node.BID != NABlock {
+			// dir listing is stored in an immutable block
 			startTime := time.Now()
 
 			remoteSource, err := d.remoteRefFactory.GetBlockSource(ctx, node.BID)
@@ -538,7 +530,7 @@ func (d *DataStore) loadLazyChildren(ctx context.Context, tx RWTx, id INode) err
 			endTime := time.Now()
 			d.monitor.AddedLazyDirBlock(ctx, startTime, endTime)
 		} else {
-			// no block, so list child objects
+			// no block, so list child objects based on the remote source
 			startTime := time.Now()
 			if node.RemoteSource == nil {
 				panic("No BID set nor remote source")
@@ -604,6 +596,37 @@ func (d *DataStore) UpdateIsRemoteGCS(inode INode, bucket string, key string, ge
 
 }
 
+func (d *DataStore) readAfterLoadLazyChildren(ctx context.Context, parent INode, update func(tx RTx) error) error {
+	updateWrapper := func(tx RWTx) error {
+		return update(tx)
+	}
+	return d.updateAfterMultiLoadLazyChildren(ctx, []INode{parent}, updateWrapper)
+}
+
+func (d *DataStore) updateAfterMultiLoadLazyChildren(ctx context.Context, parents []INode, update func(tx RWTx) error) error {
+	err := d.db.update(func(tx RWTx) error {
+		for _, parent := range parents {
+			err := d.loadLazyChildren(ctx, tx, parent)
+			if err != nil {
+				return err
+			}
+		}
+
+		err := update(tx)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	return err
+}
+
+func (d *DataStore) updateAfterLoadLazyChildren(ctx context.Context, parent INode, update func(tx RWTx) error) error {
+	return d.updateAfterMultiLoadLazyChildren(ctx, []INode{parent}, update)
+}
+
 func (d *DataStore) AddRemoteGCS(ctx context.Context, parent INode, name string, bucket string, key string) (INode, error) {
 	var inode INode
 
@@ -617,12 +640,7 @@ func (d *DataStore) AddRemoteGCS(ctx context.Context, parent INode, name string,
 		return InvalidINode, err
 	}
 
-	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(ctx, tx, parent)
-		if err != nil {
-			return err
-		}
-
+	err = d.updateAfterLoadLazyChildren(ctx, parent, func(tx RWTx) error {
 		inode, err = d.db.AddRemoteGCS(tx, parent, name, bucket, key, attrs.Generation, attrs.Size, attrs.ModTime, attrs.IsDir)
 		if err != nil {
 			return err
@@ -648,12 +666,7 @@ func (d *DataStore) MakeDir(ctx context.Context, parent INode, name string) (INo
 
 	var inode INode
 
-	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(ctx, tx, parent)
-		if err != nil {
-			return err
-		}
-
+	err = d.updateAfterLoadLazyChildren(ctx, parent, func(tx RWTx) error {
 		inode, err = d.db.AddDir(tx, parent, name)
 		if err != nil {
 			return err
@@ -720,11 +733,7 @@ func (d *DataStore) Remove(ctx context.Context, parent INode, name string) error
 		return err
 	}
 
-	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(ctx, tx, parent)
-		if err != nil {
-			return err
-		}
+	err = d.updateAfterLoadLazyChildren(ctx, parent, func(tx RWTx) error {
 
 		err = d.db.RemoveNode(tx, parent, name)
 		if err != nil {
@@ -752,11 +761,7 @@ func (d *DataStore) AddRemoteURL(ctx context.Context, parent INode, name string,
 
 	modTime := time.Now()
 
-	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(ctx, tx, parent)
-		if err != nil {
-			return err
-		}
+	err = d.updateAfterLoadLazyChildren(ctx, parent, func(tx RWTx) error {
 
 		inode, err = d.db.AddRemoteURL(tx, parent, name, URL, attrs.ETag, attrs.Size, modTime)
 		if err != nil {
@@ -783,11 +788,7 @@ func (d *DataStore) CreateWritable(ctx context.Context, parent INode, name strin
 		return InvalidINode, nil, err
 	}
 
-	err = d.db.update(func(tx RWTx) error {
-		err = d.loadLazyChildren(ctx, tx, parent)
-		if err != nil {
-			return err
-		}
+	err = d.updateAfterLoadLazyChildren(ctx, parent, func(tx RWTx) error {
 
 		if d.db.NodeExists(tx, parent, name) {
 			return ExistsErr
@@ -834,11 +835,13 @@ func freezeDir(tempDir string, freezer Freezer, dir *Dir) (*NewBlock, error) {
 func (ds *DataStore) Push(ctx context.Context, inode INode, name string) error {
 	err := validateName(name)
 	if err != nil {
+		fmt.Printf("validateName error: %s", err)
 		return err
 	}
 
 	rootBID, err := ds.Freeze(inode)
 	if err != nil {
+		fmt.Printf("freeze error: %s", err)
 		return err
 	}
 
@@ -850,6 +853,7 @@ func (ds *DataStore) Push(ctx context.Context, inode INode, name string) error {
 	err = ds.db.view(func(tx RTx) error {
 		err = collectUnpushed(ds.db, tx, inode, isPushed, &blockList)
 		if err != nil {
+			fmt.Printf("collectUnpushed error: %s", err)
 			return err
 		}
 		return nil
@@ -865,11 +869,13 @@ func (ds *DataStore) Push(ctx context.Context, inode INode, name string) error {
 	for _, BID := range blockList {
 		frozen, err := ds.freezer.GetRef(BID)
 		if err != nil {
+			log.Printf("ds.freezer.GetRef error: %s", err)
 			return err
 		}
 
 		err = ds.remoteRefFactory.Push(ctx, BID, frozen)
 		if err != nil {
+			log.Printf("ds.remoteRefFactory.Push error: %s", err)
 			return err
 		}
 		frozen.Release()
@@ -881,6 +887,7 @@ func (ds *DataStore) Push(ctx context.Context, inode INode, name string) error {
 
 	err = ds.remoteRefFactory.SetRoot(ctx, name, rootBID)
 	if err != nil {
+		log.Printf("ds.remoteRefFactory.SetRoot error: %s", err)
 		return err
 	}
 
@@ -890,6 +897,7 @@ func (ds *DataStore) Push(ctx context.Context, inode INode, name string) error {
 			mount.BID = rootBID
 			err = ds.renewLeases(ctx)
 			if err != nil {
+				log.Printf("ds.remoteRefFactory.SetRoot error: %s", err)
 				return err
 			}
 			break
@@ -1181,11 +1189,13 @@ func (ds *DataStore) SplitPath(ctx context.Context, fullPath string) (INode, str
 }
 
 func (ds *DataStore) GetINodeForPath(ctx context.Context, Path string) (INode, error) {
+	log.Printf("GetINodeForPath: %s", Path)
 	inode := INode(RootINode)
 	pathComponents := strings.Split(Path, "/")
-	for i := 0; i < len(pathComponents)-1; i++ {
+	for i := 0; i < len(pathComponents); i++ {
 		name := pathComponents[i]
 		nextNode, err := ds.GetNodeID(ctx, inode, name)
+		log.Printf("ds.GetNodeID(%d, %s) -> %d, %s", inode, name, nextNode, err)
 		if err != nil {
 			return InvalidINode, err
 		}
