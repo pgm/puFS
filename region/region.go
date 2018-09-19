@@ -2,6 +2,7 @@ package region
 
 import (
 	"fmt"
+	"log"
 	"sort"
 )
 
@@ -94,11 +95,21 @@ func (m *Mask) addDisjoint(start int64, end int64) {
 		m.regions[i-1].End = m.regions[i].End
 		m.regions = append(m.regions[:i], m.regions[i+1:]...)
 	} else {
-		m.regions = append(append(m.regions[:i], Region{start, end}), m.regions[i:]...)
+		newRegions := append(m.regions, Region{-1, -1})
+		copy(newRegions[i+1:], newRegions[i:])
+		newRegions[i] = Region{start, end}
+		m.regions = newRegions
+		// prefix := append(m.regions[:i], Region{start, end})
+		// suffix := m.regions[i:]
+		// fmt.Printf("prefix: %v\n", prefix)
+		// fmt.Printf("suffix: %v\n", suffix)
+		// fmt.Printf("m.regions= %v, m.regions[0:] = %v\n", m.regions, m.regions[0:])
+		// m.regions = append(prefix, suffix...)
 	}
 }
 
 func (m *Mask) Add(start int64, end int64) {
+	//	fmt.Printf("m.Add(%d,%d) // %p\n", start, end, m)
 	if end <= start {
 		panic(fmt.Sprintf("Attempted add of invalid region: start=%d, end=%d", start, end))
 	}
@@ -109,6 +120,22 @@ func (m *Mask) Add(start int64, end int64) {
 		}
 		m.addDisjoint(r.Start, r.End)
 	}
+	m.TotalLength()
+}
+
+func (m *Mask) Validate() {
+	for i, r := range m.regions {
+		if i > 0 {
+
+			prev := m.regions[i-1]
+			if prev.End > r.Start {
+				panic("Regions are not disjoint")
+			}
+			if prev.End == r.Start {
+				log.Printf("Regions are contigious")
+			}
+		}
+	}
 }
 
 func (m *Mask) TotalLength() int64 {
@@ -116,11 +143,22 @@ func (m *Mask) TotalLength() int64 {
 	for _, r := range m.regions {
 		total += r.End - r.Start
 	}
+	m.Validate()
 	return total
 }
 
 func (m *Mask) Count() int {
 	return len(m.regions)
+}
+
+func (m *Mask) GetFirstMissingRegion(start int64, end int64) *Region {
+	regions := m.GetMissing(start, end)
+	if len(regions) == 0 {
+		return nil
+	} else {
+		r := regions[0]
+		return &r
+	}
 }
 
 /* returns the min start which is greater or equal to the provided position */

@@ -118,6 +118,13 @@ func TestSample2(t *testing.T) {
 
 }
 
+func TestSample3(t *testing.T) {
+	m := New()
+	m.Add(14336000, 14449355) // 0xc0001beaa0
+	m.Add(2662400, 2775755)   // 0xc0001beaa0
+	m.Validate()
+}
+
 func TestMiddle(t *testing.T) {
 	require := require.New(t)
 
