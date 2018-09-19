@@ -121,8 +121,8 @@ type MockMarker struct {
 	history *History
 }
 
-func (m *MockMarker) GetPendingStats(n int64) *PendingStats {
-	return (m.history.log("GetPendingStats", n)).(*PendingStats)
+func (m *MockMarker) GetFirstMissingRegion(start int64, end int64) *Region {
+	return (m.history.log("GetFirstMissingRegion", start)).(*Region)
 }
 
 type addRegionParams struct {
@@ -218,8 +218,7 @@ func TestBasicPendingSequence(t *testing.T) {
 	// expect AddRegion is called once we've finished writing > 5 bytes
 	expectAddRegion := history.Expect("AddRegion")
 	// Also expect these calls should be made and will always return a single value
-	history.Expect("GetPendingStats").AndThenReturn(&PendingStats{PopulatedAtPosition: false,
-		NextRegionStart: 1000})
+	history.Expect("GetFirstMissingRegion").AndThenReturn(&Region{0, 1000})
 	j.Join()
 
 	buf = make([]byte, 10)
@@ -300,8 +299,7 @@ func TestJoinExistingRequest(t *testing.T) {
 	// expect AddRegion is called once we've finished writing > 5 bytes
 	history.Expect("AddRegion").AndThenReturn(nil)
 	// Also expect these calls should be made and will always return a single value
-	history.Expect("GetPendingStats").AndThenReturn(&PendingStats{PopulatedAtPosition: false,
-		NextRegionStart: 1000})
+	history.Expect("GetFirstMissingRegion").AndThenReturn(&Region{0, 1000})
 	j.Join()
 
 	buf = make([]byte, 10)

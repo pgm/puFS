@@ -462,7 +462,7 @@ func printDbStats(tx RTx) {
 	cn.ForEachWithPrefix(nil, func(k, v []byte) error {
 		parent, name := splitChildKey(k)
 		inode := INode(binary.LittleEndian.Uint32(k))
-		fmt.Printf("child key=(%d, %s), value=%s\n", parent, name, inode)
+		fmt.Printf("child key=(%d, %s), value=%v\n", parent, name, inode)
 		return nil
 	})
 }

@@ -298,13 +298,10 @@ func (p *PendingReadsImp) StartBackgroundCopy(rootCtx context.Context, marker Ma
 		}
 	}
 
-	trace.Start(nil)
-
 	var task *trace.Task
 	var taskCtx context.Context
 	var markingWriter *MarkingWriter
 	if !joined {
-		log.Printf("Adding new pending read for %d-%d (max: %d)", start, end, maxEnd)
 		cancelableCtx, cancelFunc := context.WithCancel(context.Background())
 		taskCtx, task = trace.NewTask(cancelableCtx, "MarkingCopy")
 		markingWriter = &MarkingWriter{owner: p,
