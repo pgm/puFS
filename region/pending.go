@@ -6,7 +6,9 @@ import (
 	"io"
 	"log"
 	"math"
+	"runtime/trace"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,21 +27,23 @@ type PendingReads interface {
 }
 
 type callStatus struct {
+	waitCount  *int32
 	complete   bool
 	err        error
 	resultChan <-chan error
 }
 
 func (c *callStatus) Wait() error {
+	atomic.AddInt32(c.waitCount, 1)
 	if !c.complete {
 		c.err = <-c.resultChan
 		c.complete = true
+		atomic.AddInt32(c.waitCount, -1)
 	}
 	return c.err
 }
 
 func (c *callStatus) IsRunning() bool {
-
 	if c.complete {
 		return false
 	}
@@ -58,6 +62,7 @@ type PendingReadsImp struct {
 	mutex     sync.Mutex
 	flushCond *sync.Cond
 	writers   []*MarkingWriter
+	waitCount int32
 }
 
 type PendingReadsStatus struct {
@@ -79,6 +84,8 @@ func NewPendingReads() PendingReads {
 func (p *PendingReadsImp) GetStatus(timeUnit time.Duration) []*PendingReadsStatus {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
+
+	log.Printf("GetStatus: waitCount=%d", p.waitCount)
 
 	status := make([]*PendingReadsStatus, len(p.writers))
 	for i, w := range p.writers {
@@ -124,13 +131,8 @@ func (p *PendingReadsImp) WaitForRegion(start int64, end int64) {
 	}
 }
 
-type PendingStats struct {
-	PopulatedAtPosition bool
-	NextRegionStart     int64
-}
-
 type Marker interface {
-	GetPendingStats(regionStart int64) *PendingStats
+	GetFirstMissingRegion(start int64, end int64) *Region
 	AddRegion(start int64, end int64)
 }
 
@@ -157,7 +159,8 @@ type MarkingWriter struct {
 	pendingStart int64
 	pendingEnd   int64
 
-	// the largest allowed end of the "pending" region
+	// the largest allowed end of the "pending" region. This is initialized upon construction and what is passed
+	// to copy, so we cannot update this.
 	maxPendingEnd int64
 
 	// after this many bytes have been copied, update the region map
@@ -242,8 +245,8 @@ func (m *MarkingWriter) updatedPendingEnd() {
 			}
 		}
 		m.pendingEnd = (maxEnd + m.readheadSize)
-		if m.pendingEnd > m.maxPendingEnd {
-			m.maxPendingEnd = m.pendingEnd
+		if m.maxPendingEnd < m.pendingEnd {
+			m.pendingEnd = m.maxPendingEnd
 		}
 		m.validate()
 	}
@@ -262,7 +265,6 @@ func (m *MarkingWriter) addCaller(ctx context.Context, caller *waitingCaller) {
 }
 
 func (p *PendingReadsImp) StartBackgroundCopy(rootCtx context.Context, marker Marker, copier Copier, start int64, end int64, maxEnd int64, minUncommited int64, readheadSize int64, writer io.Writer) CallStatus {
-	ctx, cancelFunc := context.WithCancel(context.Background())
 	length := maxEnd - start
 
 	if length <= 0 {
@@ -271,21 +273,6 @@ func (p *PendingReadsImp) StartBackgroundCopy(rootCtx context.Context, marker Ma
 
 	requiredResultChan := make(chan error, 1)
 
-	markingWriter := &MarkingWriter{owner: p,
-		active:        true,
-		cancelFunc:    cancelFunc,
-		marker:        marker,
-		writer:        writer,
-		offset:        start,
-		originalStart: start,
-		startTime:     time.Now(),
-		pendingStart:  start,
-		pendingEnd:    end,
-		readheadSize:  readheadSize,
-		maxPendingEnd: end,
-		minUncommited: minUncommited,
-		callers:       make([]*waitingCaller, 0, 20)}
-	markingWriter.validate()
 	caller := &waitingCaller{active: true, end: end, resultChan: requiredResultChan}
 
 	p.mutex.Lock()
@@ -295,8 +282,11 @@ func (p *PendingReadsImp) StartBackgroundCopy(rootCtx context.Context, marker Ma
 		// if there's an existing (w) read where pendingStart falls within w.pendingStart and w.pendingEnd
 		// then we just want to join this request
 		if start >= w.pendingStart && start <= w.pendingEnd {
+			if !w.active {
+				panic("checked an inactive writer")
+			}
 			if !joined {
-				log.Printf("Read (%d-%d) joining existing pending read: %p (%d-%d)", start, end, w, w.pendingStart, w.pendingEnd)
+				// log.Printf("Read (%d-%d) joining existing pending read: %p (%d-%d)", start, end, w, w.pendingStart, w.pendingEnd)
 				w.addCaller(rootCtx, caller)
 				w.updatedPendingEnd()
 				joined = true
@@ -308,8 +298,31 @@ func (p *PendingReadsImp) StartBackgroundCopy(rootCtx context.Context, marker Ma
 		}
 	}
 
+	trace.Start(nil)
+
+	var task *trace.Task
+	var taskCtx context.Context
+	var markingWriter *MarkingWriter
 	if !joined {
 		log.Printf("Adding new pending read for %d-%d (max: %d)", start, end, maxEnd)
+		cancelableCtx, cancelFunc := context.WithCancel(context.Background())
+		taskCtx, task = trace.NewTask(cancelableCtx, "MarkingCopy")
+		markingWriter = &MarkingWriter{owner: p,
+			active:        true,
+			cancelFunc:    cancelFunc,
+			marker:        marker,
+			writer:        writer,
+			offset:        start,
+			originalStart: start,
+			startTime:     time.Now(),
+			pendingStart:  start,
+			pendingEnd:    end,
+			readheadSize:  readheadSize,
+			maxPendingEnd: maxEnd,
+			minUncommited: minUncommited,
+			callers:       make([]*waitingCaller, 0, 20)}
+		markingWriter.validate()
+
 		markingWriter.addCaller(rootCtx, caller)
 		p.writers = append(p.writers, markingWriter)
 	}
@@ -318,29 +331,35 @@ func (p *PendingReadsImp) StartBackgroundCopy(rootCtx context.Context, marker Ma
 
 	if !joined {
 		go executeThenCleanup(func() error {
-			err := copier.Copy(ctx, start, length, markingWriter)
+			err := copier.Copy(taskCtx, start, length, markingWriter)
 			log.Printf("copier.Copy returned err: %v", err)
-			if err != nil {
-				p.mutex.Lock()
-				for _, c := range markingWriter.callers {
-					// notify caller of error
-					c.resultChan <- err
-					close(c.resultChan)
-					c.active = false
-				}
-				markingWriter.removeInactive()
-				defer p.mutex.Unlock()
+			// if err == context.Canceled {
+			// 	missing := markingWriter.marker.GetFirstMissingRegion(start, length)
+			// 	if missing == nil {
+			// 		log.Printf("copier was aborted, but nothing is missing, so no problem")
+			// 		err = nil
+			// 	}
+			// }
+			p.mutex.Lock()
+			defer p.mutex.Unlock()
+			for _, c := range markingWriter.callers {
+				// notify caller of error
+				c.resultChan <- err
+				close(c.resultChan)
+				c.active = false
 			}
+			markingWriter.removeInactive()
 			return err
 		}, func() {
 			p.mutex.Lock()
 			defer p.mutex.Unlock()
 			p.writers = removeElement(p.writers, markingWriter)
+			task.End()
 		})
 
 	}
 
-	return &callStatus{resultChan: requiredResultChan}
+	return &callStatus{resultChan: requiredResultChan, waitCount: &p.waitCount}
 }
 
 func executeThenCleanup(body func() error, cleanup func()) {
@@ -395,15 +414,8 @@ func (m *MarkingWriter) removeInactive() {
 	m.callers = removeInactive(m.callers)
 }
 
-func (m *MarkingWriter) flush(nextRegionStart int64, abortOnceMinReached bool) {
+func (m *MarkingWriter) flush(abortOnceMinReached bool, abortImmediately bool) {
 	m.owner.mutex.Lock()
-
-	// Check to see if we've hit the next region
-	if m.offset >= nextRegionStart {
-		// if we have, then there's no point in keep reading. Abort
-		log.Printf("Canceling read because we've crossed into next region")
-		m.cancelFunc()
-	}
 
 	// update the region map to include what we just finished reading
 	newRegionStart := m.pendingStart
@@ -415,6 +427,7 @@ func (m *MarkingWriter) flush(nextRegionStart int64, abortOnceMinReached bool) {
 	if len(m.callers) == 0 {
 		if abortOnceMinReached {
 			m.pendingEnd = m.offset
+			log.Printf("updating pendingEnd to trigger cancel")
 			m.validate()
 		}
 
@@ -425,8 +438,9 @@ func (m *MarkingWriter) flush(nextRegionStart int64, abortOnceMinReached bool) {
 		}
 	} else {
 		inactive := 0
+		// for each caller, see if we can wake it up and signal it's done.
 		for _, c := range m.callers {
-			if m.offset >= c.end {
+			if m.offset >= c.end || abortImmediately {
 				c.resultChan <- nil
 				close(c.resultChan)
 				c.active = false
@@ -436,9 +450,6 @@ func (m *MarkingWriter) flush(nextRegionStart int64, abortOnceMinReached bool) {
 
 		if inactive > 0 {
 			m.removeInactive()
-			// if len(m.callers) == 0 {
-			// 	m.requiredFinished = time.Now()
-			// }
 		}
 
 		m.updatedPendingEnd()
@@ -473,20 +484,20 @@ func (m *MarkingWriter) Write(buffer []byte) (int, error) {
 
 	//log.Printf("Wrote: offset=%d, pendingStart=%d, pendingEnd=%d, minUncommited=%d", offset, pendingStart, pendingEnd, minUncommited)
 	if offset-pendingStart >= minUncommited || offset >= pendingEnd {
-		stats := m.marker.GetPendingStats(pendingStart)
+		missing := m.marker.GetFirstMissingRegion(pendingStart, m.maxPendingEnd)
 
-		// there's no harm in flushing a region that was already populated
-		// and we might have even extended the region -- however, if that
-		// does happen, it implies that a race condition occurred and that
-		// we're probably going to keep writing on a region that is already
-		// being written by another thread. In which case, abort this copy.
-		// However, this request could be reading up to a longer region than
-		// the one we're racing so we can't abort immediately. Instead just
-		// abort once we've reached our min required position
-		abortOnceMinReached := stats.PopulatedAtPosition
+		abortOnceMinReached := false
+		abortImmediately := false
+		if missing == nil {
+			// there's nothing left to do, so abort
+			abortImmediately = true
+		} else {
+			// we've started copying onto a region that another copy task populated.
+			abortOnceMinReached = true
+		}
 
 		//log.Printf("flushing: maxReadPosition=%d, nextRegionStart=%d, abortOnceMinReached=%d", stats.NextRegionStart, abortOnceMinReached)
-		m.flush(stats.NextRegionStart, abortOnceMinReached)
+		m.flush(abortOnceMinReached, abortImmediately)
 	}
 
 	return n, nil

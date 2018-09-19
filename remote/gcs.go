@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"runtime/trace"
 	"strings"
 	"time"
 
@@ -214,6 +215,7 @@ func (r *GCSRef) GetSize() int64 {
 }
 
 func (r *GCSRef) Copy(ctx context.Context, offset int64, len int64, writer io.Writer) error {
+	defer trace.StartRegion(ctx, "GCSCopy").End()
 	return copyRegion(ctx, r.Owner.GCSClient, r.Source.Bucket, r.Source.Key, r.Source.Generation, offset, len, writer)
 }
 

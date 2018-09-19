@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"runtime/trace"
+
 	"bazil.org/fuse"
 	"bazil.org/fuse/fuseutil"
 	"github.com/pgm/sply2/core"
@@ -726,6 +728,7 @@ func (c *Server) Rename(ctx context.Context, req *fuse.RenameRequest) error {
 }
 
 func (c *Server) Read(ctx context.Context, req *fuse.ReadRequest, res *fuse.ReadResponse) error {
+	defer trace.StartRegion(ctx, "Read").End()
 	c.meta.Lock()
 	h, handleValid := c.handles[req.Handle]
 	c.meta.Unlock()
@@ -770,6 +773,7 @@ func (c *Server) Read(ctx context.Context, req *fuse.ReadRequest, res *fuse.Read
 }
 
 func (c *Server) Write(ctx context.Context, req *fuse.WriteRequest, res *fuse.WriteResponse) error {
+	defer trace.StartRegion(ctx, "Write").End()
 	c.meta.Lock()
 	h, handleValid := c.handles[req.Handle]
 	c.meta.Unlock()

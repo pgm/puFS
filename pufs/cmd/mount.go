@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path"
 	"regexp"
+	"runtime/trace"
 	"time"
 
 	"github.com/spf13/viper"
@@ -35,6 +37,19 @@ var mountCmd = &cobra.Command{
 		repoPath := args[0]
 		mountPoint := args[1]
 
+		var traceFd io.WriteCloser
+		traceFile, err := cmd.Flags().GetString("trace")
+		if err != nil {
+			panic(err)
+		}
+		if traceFile != "" {
+			traceFd, err = os.Create(traceFile)
+			if err != nil {
+				log.Fatalf("Could not open trace %s: %s", traceFile, err)
+			}
+			trace.Start(traceFd)
+		}
+
 		if _, err := os.Stat(mountPoint); os.IsNotExist(err) {
 			err = os.MkdirAll(mountPoint, 0777)
 			if err != nil {
@@ -59,11 +74,16 @@ var mountCmd = &cobra.Command{
 
 		fs.Mount(mountPoint, ds)
 		ticker.Stop()
+		trace.Stop()
+		if traceFd != nil {
+			traceFd.Close()
+		}
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(mountCmd)
+	mountCmd.Flags().String("trace", "", "Write execution trace to specified file")
 
 	// Here you will define your flags and configuration settings.
 

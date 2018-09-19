@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime/trace"
 	"sync"
 	"time"
 
@@ -161,9 +162,6 @@ func (w *FrozenRefImp) ensurePulled(ctx context.Context, start int64, end int64,
 		id := w.owner.RemoteCopyStart(w.BID, r.Start, r.End, startTime)
 		//		log.Printf("Freezer (%p): Started copy of %d-%d (orig: %d-%d)", ctx, r.Start, r.End, origStart, origEnd)
 		err = w.owner.CopyFromRemote(ctx, w.BID, w.remote, r.Start, r.End, f)
-		if err != nil {
-			return err
-		}
 		endTime := time.Now()
 		//log.Printf("Freezer (%p): Finished copy of %d-%d (orig: %d-%d)", ctx, r.Start, r.End, origStart, origEnd)
 		w.owner.RemoteCopyEnd(id, endTime)
@@ -511,7 +509,7 @@ type freezerMarker struct {
 	regions *Regions
 }
 
-func (f *freezerMarker) GetPendingStats(regionStart int64) *region.PendingStats {
+func (f *freezerMarker) GetFirstMissingRegion(start int64, end int64) *region.Region {
 	f.owner.mutex.Lock()
 	// offsets := f.regions.recentReads.offsets
 	// maxReadPosition := int64(0)
@@ -521,9 +519,7 @@ func (f *freezerMarker) GetPendingStats(regionStart int64) *region.PendingStats 
 	// 	}
 	// }
 
-	nextRegionStart := f.regions.populated.GetNextStart(regionStart, f.regions.size)
-	missingRegionsAtStart := f.regions.populated.GetMissing(regionStart, regionStart+1)
-	populatedAtPosition := len(missingRegionsAtStart) == 0
+	missing := f.regions.populated.GetFirstMissingRegion(start, end)
 	// if len(missingRegionsAtStart) != 0 {
 	// 	log.Printf("GetPendingStats at %d, maxReadPosition=%v, missing: %d-%d", regionStart, offsets, missingRegionsAtStart[0].Start, missingRegionsAtStart[0].End)
 	// } else {
@@ -532,9 +528,7 @@ func (f *freezerMarker) GetPendingStats(regionStart int64) *region.PendingStats 
 
 	f.owner.mutex.Unlock()
 
-	return &region.PendingStats{
-		NextRegionStart:     nextRegionStart,
-		PopulatedAtPosition: populatedAtPosition}
+	return missing
 }
 
 type BlockTransferStatus struct {
@@ -565,14 +559,39 @@ func (f *freezerMarker) AddRegion(start int64, end int64) {
 }
 
 func (f *FreezerImp) CopyFromRemote(ctx context.Context, BID BlockID, remote RemoteRef, start int64, end int64, writer io.Writer) error {
+	defer trace.StartRegion(ctx, "CopyFromRemote").End()
+
 	f.mutex.Lock()
 	regions := f.regions[BID]
 	maxEnd := regions.populated.GetNextStart(end, regions.size)
 	f.mutex.Unlock()
 
 	marker := &freezerMarker{owner: f, BID: BID, regions: regions}
-	callStatus := regions.pending.StartBackgroundCopy(ctx, marker, remote, start, end, maxEnd, 1024*100, f.maxBackgroundTransfer, writer)
-	return callStatus.Wait()
+
+	retryCount := 0
+	for {
+		log.Printf("freezer op %p: StartBackgroundCopy %d-%d started", ctx, start, end)
+		callStatus := regions.pending.StartBackgroundCopy(ctx, marker, remote, start, end, maxEnd, 1024*100, f.maxBackgroundTransfer, writer)
+		err := callStatus.Wait()
+		log.Printf("freezer op %p: StartBackgroundCopy %d-%d completed, err=%v", ctx, start, end, err)
+		if err == nil {
+			break
+		} else if err == context.Canceled && ctx.Err() != context.Canceled {
+			// if the parent isn't canceled, but the child request got cancelled, try again
+			retryCount++
+			if retryCount > 10 {
+				log.Printf("Giving up, returning err")
+				return err
+			} else {
+				log.Printf("Possible race occurred in StartBackgroundCopy. Child request was canceled but parent is still active. Retry attempt #%d...", retryCount)
+				continue
+			}
+		} else {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (f *FreezerImp) getMissingRegions(BID BlockID, start int64, end int64, size int64) ([]region.Region, error) {
