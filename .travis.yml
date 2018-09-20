@@ -6,10 +6,10 @@ install:
 - dep ensure
 script:
  - go test -v $(go list ./... | grep -v "/vendor/")
-- mkdir dist
-- pwd
-- go build -o dist/pufs pufs/main.go
-- ls -l dist
+ - mkdir dist
+ - pwd
+ - go build -o dist/pufs pufs/main.go
+ - ls -l dist
 deploy:
   provider: gcs
   access_key_id: GOOG557776BZ26MSVDGSVW5G
