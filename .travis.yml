@@ -9,6 +9,7 @@ script:
 - mkdir dist
 - pwd
 - go build -o dist/pufs-${TRAVIS_BUILD_NUMBER} pufs/main.go
+- ls -l dist
 deploy:
   provider: gcs
   access_key_id: GOOG557776BZ26MSVDGSVW5G
