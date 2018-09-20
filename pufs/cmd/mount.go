@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"encoding/gob"
-	"fmt"
 	"io"
 	"log"
 	"os"
@@ -12,7 +11,7 @@ import (
 	"runtime/trace"
 	"time"
 
-	"github.com/spf13/viper"
+	"github.com/magiconair/properties"
 
 	"cloud.google.com/go/storage"
 	"github.com/pgm/sply2"
@@ -24,7 +23,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const PufsInfoFilename = ".pufs-info"
+const PufsInfoFilename = ".pufs/info"
 
 var PUFSUrlExp *regexp.Regexp = regexp.MustCompile("^pufs:///(.*)$")
 
@@ -57,7 +56,7 @@ var mountCmd = &cobra.Command{
 			}
 		}
 
-		ds := NewDataStore(repoPath, false)
+		ds := openExistingDataStore(repoPath)
 
 		ticker := time.NewTicker(5 * time.Second)
 
@@ -95,86 +94,73 @@ func init() {
 	// mountCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
 
-type NewDataStoreOptions struct {
-	mountAsRoot string
+// type NewDataStoreOptions struct {
+// 	mountAsRoot           string
+// 	dsOptions             []core.DataStoreOption
+// 	maxBackgroundTransfer int64
+// }
+
+// type NewDataStoreOption func(o *NewDataStoreOptions)
+
+// func MountAsRoot(path string) func(o *NewDataStoreOptions) {
+// 	return func(o *NewDataStoreOptions) {
+// 		o.mountAsRoot = path
+// 	}
+// }
+
+// func AddDatastoreOption(dso core.DataStoreOption) func(o *NewDataStoreOptions) {
+// 	return func(o *NewDataStoreOptions) {
+// 		o.dsOptions = append(o.dsOptions, dso)
+// 	}
+// }
+
+// func MaxBackgroundTransfer(length int64) func(o *NewDataStoreOptions) {
+// 	return func(o *NewDataStoreOptions) {
+// 		o.maxBackgroundTransfer = length
+// 	}
+// }
+
+type repoInfo struct {
+	credentialsPath       string
+	bucketName            string
+	keyPrefix             string
+	maxBackgroundTransfer int
+	socketAddress         string
 }
 
-type NewDataStoreOption func(o *NewDataStoreOptions)
+func loadRepoInfo(dir string) *repoInfo {
+	pufsInfoPath := path.Join(dir, PufsInfoFilename)
+	p := properties.MustLoadFile(pufsInfoPath, properties.UTF8)
+	return &repoInfo{credentialsPath: p.MustGetString("credentialsPath"),
+		bucketName:            p.MustGetString("bucketName"),
+		keyPrefix:             p.MustGetString("keyPrefix"),
+		maxBackgroundTransfer: p.MustGetInt("maxBackgroundTransfer"),
+		socketAddress:         p.MustGetString("socketAddress")}
+	// read config to use from info file
+	// f, err := os.Open(pufsInfoPath)
+	// if err != nil {
+	// 	log.Fatalf("Could not create %s: %s", pufsInfoPath, err)
+	// }
 
-func MountAsRoot(path string) func(o *NewDataStoreOptions) {
-	return func(o *NewDataStoreOptions) {
-		o.mountAsRoot = path
-	}
+	// panic("")
+}
+func openExistingDataStore(dir string) *core.DataStore {
+	return openDataStore(dir, core.OpenExisting())
 }
 
-func NewDataStore(dir string, createIfMissing bool, options ...NewDataStoreOption) *core.DataStore {
-	bucketName := viper.GetString("bucket")
-	keyPrefix := viper.GetString("keyprefix")
-	credentialsPath := viper.GetString("credentials")
-	var optionStruct NewDataStoreOptions
+func openDataStore(dir string, dsOptions ...core.DataStoreOption) *core.DataStore {
 
-	for _, option := range options {
-		option(&optionStruct)
-	}
-
-	fmt.Printf("dir:%s\nbucket: %s\nkeyPrefix: %s\nmountAsRoot: %s\ncreateIfMissing: %v\n", dir, bucketName, keyPrefix, optionStruct.mountAsRoot, createIfMissing)
-
-	var err error
-	if _, err = os.Stat(dir); os.IsNotExist(err) {
-		if createIfMissing {
-			err = os.MkdirAll(dir, 0700)
-			if err != nil {
-				log.Fatalf("Could not create %s: %s", dir, err)
-			}
-
-			pufsInfoPath := path.Join(dir, PufsInfoFilename)
-			f, err := os.Create(pufsInfoPath)
-			if err != nil {
-				log.Fatalf("Could not create %s: %s", pufsInfoPath, err)
-			}
-			f.WriteString("type=repo\n")
-			defer f.Close()
-		} else {
-			log.Fatalf("No repo at %s", dir)
-		}
-	}
+	repoInfo := loadRepoInfo(dir)
 
 	ctx := context.Background()
 
 	// Creates a client.
-	client, err := storage.NewClient(ctx, option.WithServiceAccountFile(credentialsPath))
+	client, err := storage.NewClient(ctx, option.WithServiceAccountFile(repoInfo.credentialsPath))
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 
-	remoteRefFactory := remote.NewRemoteRefFactory(client, bucketName, keyPrefix)
-
-	dsOptions := make([]core.DataStoreOption, 0)
-	if !createIfMissing {
-		dsOptions = append(dsOptions, core.OpenExisting())
-	}
-
-	if optionStruct.mountAsRoot != "" {
-		gcsmatch := GCSUrlExp.FindStringSubmatch(optionStruct.mountAsRoot)
-
-		if gcsmatch != nil {
-			bucket := gcsmatch[1]
-			key := gcsmatch[2]
-			dsOptions = append(dsOptions, core.DataStoreWithGCSRoot(bucket, key))
-		} else if pufsmatch := PUFSUrlExp.FindStringSubmatch(optionStruct.mountAsRoot); pufsmatch != nil {
-			log.Printf("pufs:%v", pufsmatch)
-			label := pufsmatch[1]
-
-			BID, err := remoteRefFactory.GetRoot(ctx, label)
-			if err != nil {
-				log.Fatalf("Could not get root %s: %v", label, err)
-			}
-
-			dsOptions = append(dsOptions, core.DataStoreWithBIDRoot(BID))
-		} else {
-			log.Fatalf("Root was not parsable: %s", optionStruct.mountAsRoot)
-		}
-	}
+	remoteRefFactory := remote.NewRemoteRefFactory(client, repoInfo.bucketName, repoInfo.keyPrefix)
 
 	ds, err := core.NewDataStore(dir, remoteRefFactory, remoteRefFactory,
 		sply2.NewBoltDB(path.Join(dir, "freezer.db"),
@@ -191,6 +177,7 @@ func NewDataStore(dir string, createIfMissing bool, options ...NewDataStoreOptio
 	ds.SetClients(remoteRefFactory)
 
 	return ds
+
 }
 
 func GobRegisterTypes() {

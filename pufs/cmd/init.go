@@ -17,8 +17,11 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/pgm/sply2/core"
@@ -60,33 +63,42 @@ var initCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		repoPath := args[0]
 
-		log.Printf("a")
 		root, err := cmd.Flags().GetString("root")
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		log.Printf("a")
 		map_, err := cmd.Flags().GetString("map")
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		log.Printf("a")
+		readahead, err := cmd.Flags().GetInt("readahead")
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		credentialsPath, err := cmd.Flags().GetString("creds")
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		bucketName := ""
+		keyPrefix := ""
+
 		var mapping *MountMap
-		options := make([]NewDataStoreOption, 0, 10)
 		if root != "" {
 			if map_ != "" {
 				log.Fatal("Cannot specify both --map and --root parameters")
 			}
-			options = append(options, MountAsRoot(root))
 		} else if map_ != "" {
 			mapping = parseMap(map_)
 			if mapping.Root != "" {
-				options = append(options, MountAsRoot(mapping.Root))
+				root = mapping.Root
 			}
 		}
-		ds := NewDataStore(repoPath, true, options...)
+
+		ds := createDataStore(repoPath, root, credentialsPath, bucketName, keyPrefix, readahead)
 		if mapping != nil {
 			ctx := context.Background()
 			inodex := core.INode(core.RootINode)
@@ -122,4 +134,79 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 	initCmd.Flags().String("root", "", "remote path to use for the root (ie: gs://bucket/path/ or pufs:///label )")
 	initCmd.Flags().String("map", "", "json file which describes how to prepopulate the filesystem")
+	initCmd.Flags().String("creds", "", "path to json credentials file for service account to use")
+	initCmd.Flags().Int("readahead", core.DefaultMaxBackgroundTransfer, "How much streaming in background to perform")
+}
+
+func createDataStore(dir string, mountAsRoot string, credentialsPath string, bucketName string, keyPrefix string, maxBackgroundTransfer int) *core.DataStore {
+	// log.Printf("mountAsRoot=%s", mountAsRoot)
+	socketFile, err := ioutil.TempFile("", "pufs-"+path.Base(dir))
+	if err != nil {
+		log.Fatalf("Could not create socket in temp dir: %s", err)
+	}
+	socketAddress := socketFile.Name()
+	socketFile.Close()
+
+	if _, err = os.Stat(dir); os.IsNotExist(err) {
+		err = os.MkdirAll(dir, 0700)
+		if err != nil {
+			log.Fatalf("Could not create %s: %s", dir, err)
+		}
+
+		pufsDir := path.Join(dir, path.Dir(PufsInfoFilename))
+		err = os.MkdirAll(pufsDir, 0700)
+		if err != nil {
+			log.Fatalf("Could not create %s: %s", pufsDir, err)
+		}
+
+		pufsInfoPath := path.Join(dir, PufsInfoFilename)
+		f, err := os.Create(pufsInfoPath)
+		if err != nil {
+			log.Fatalf("Could not create %s: %s", pufsInfoPath, err)
+		}
+
+		configStr := fmt.Sprintf("type=repo\n"+
+			"maxBackgroundTransfer=%d\n"+
+			"credentialsPath=%s\n"+
+			"bucketName=%s\n"+
+			"keyPrefix=%s\n"+
+			"socketAddress=%s\n",
+			maxBackgroundTransfer,
+			credentialsPath,
+			bucketName,
+			keyPrefix,
+			socketAddress)
+		_, err = f.WriteString(configStr)
+		if err != nil {
+			log.Fatalf("Could not write %s: %s", pufsInfoPath, err)
+		}
+		defer f.Close()
+	}
+
+	dsOptions := make([]core.DataStoreOption, 0)
+	//	dsOptions = append(dsOptions, core.OpenExisting())
+	if mountAsRoot != "" {
+		gcsmatch := GCSUrlExp.FindStringSubmatch(mountAsRoot)
+
+		if gcsmatch != nil {
+			bucket := gcsmatch[1]
+			key := gcsmatch[2]
+			dsOptions = append(dsOptions, core.DataStoreWithGCSRoot(bucket, key))
+		} else if pufsmatch := PUFSUrlExp.FindStringSubmatch(mountAsRoot); pufsmatch != nil {
+			panic("unimplemented")
+			// log.Printf("pufs:%v", pufsmatch)
+			// label := pufsmatch[1]
+
+			// BID, err := remoteRefFactory.GetRoot(ctx, label)
+			// if err != nil {
+			// 	log.Fatalf("Could not get root %s: %v", label, err)
+			// }
+
+			// dsOptions = append(dsOptions, core.DataStoreWithBIDRoot(BID))
+		} else {
+			log.Fatalf("Root was not parsable: %s", mountAsRoot)
+		}
+	}
+
+	return openDataStore(dir, dsOptions...)
 }

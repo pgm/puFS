@@ -197,7 +197,7 @@ func (rrf *RemoteRefFactoryImp) Push(ctx context.Context, BID core.BlockID, rr c
 }
 
 func NewRemoteRefFactory(client *storage.Client, Bucket string, KeyPrefix string) *RemoteRefFactoryImp {
-	if !strings.HasSuffix(KeyPrefix, "/") {
+	if !strings.HasSuffix(KeyPrefix, "/") && KeyPrefix != "" {
 		panic("Prefix must end in /")
 	}
 	return &RemoteRefFactoryImp{GCSClient: client, Bucket: Bucket, CASKeyPrefix: KeyPrefix + "CAS/",

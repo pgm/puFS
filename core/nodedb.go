@@ -3,7 +3,6 @@ package core
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
@@ -565,9 +564,9 @@ func makeGSCHashBlockID(bucket string, key string, generation int64) BlockID {
 	}
 	copy(BID[:], hashID[:])
 
-	hashedStr := base64.RawStdEncoding.EncodeToString(BID[:])
-	hashedStr2 := base64.RawStdEncoding.EncodeToString(hashID[:])
-	fmt.Printf("makeGSCHashBlockID key=%s BID=%s, hashedStr=%s, hashedStr2=%s\n", keyStr, BID, hashedStr, hashedStr2)
+	// hashedStr := base64.RawStdEncoding.EncodeToString(BID[:])
+	// hashedStr2 := base64.RawStdEncoding.EncodeToString(hashID[:])
+	// fmt.Printf("makeGSCHashBlockID key=%s BID=%s, hashedStr=%s, hashedStr2=%s\n", keyStr, BID, hashedStr, hashedStr2)
 
 	return BID
 }

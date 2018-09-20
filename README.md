@@ -1,6 +1,6 @@
-# sply2 [![Build Status](https://travis-ci.org/pgm/sply2.svg?branch=master)](https://travis-ci.org/pgm/sply2)
+# pufs [![Build Status](https://travis-ci.org/pgm/sply2.svg?branch=master)](https://travis-ci.org/pgm/sply2)
 
-sply2 is an experiment in creating a service to help bridge software which assumes data is accessible on the filesystem and remote object stores such as S3 and GCS.
+**pufs** is an experiment in creating a service to help bridge software which assumes data is accessible on the filesystem and remote object stores such as S3 and GCS.
 
 The design choices are targeting examples with:
   - Write once batch processing (input files consumed and new files writen)
@@ -8,28 +8,38 @@ The design choices are targeting examples with:
   - Large scale, parallel, share-nothing workloads
 
 The core ideas are:
-  - The "sply2" service mirrors objects from an object store locally in a managed arena.  All read-only processing can use the version from there.
-  - Files are atomically added only after they are fully written.  There is no mechanism for updating.
-  - Files are only uploaded upon a "push" operation.  At which time all files not yet stored
-  in object storage are uploaded.
-  - Files are lazily downloaded on demand and kept in the arena until.
-  - Metadata about files is similarly stored in a mutable database which
-  points to immutable files or writable files which have not yet been
-  pushed.
-  - Garbage collection is performed to reclaim space in the object store as well as the local cache arena
+  - The "pufs" service mirrors objects from an object store locally in a managed arena.  All read-only processing can use the version from there.
+  - Files are atomically added only after they are fully written.  There is no mechanism for updating, only replacing.
+  - Files are only uploaded upon a "push" or "upload" operation.  At which time all files not yet stored in object storage are uploaded.
+  - Files are lazily downloaded on demand and kept locally for future reads.
+  - Metadata about files is stored in a mutable database. Each file entry
+  points to either an immutable file or a writable files which have not yet been pushed.
 
-The "sply2" command can be used to perform operations such as "push" and
-"mount".   There is also a FUSE client which makes the files stored in sply2 visible as a filesystem.
+The "pufs" command is a command line client used to perform all operations.
 
 
-Example
+Tutorial:
 
+Before we can get started, we'll need a [service account](https://cloud.google.com/iam/docs/creating-managing-service-accounts) which has [access](https://cloud.google.com/storage/docs/access-control/) to the buckets that we want to use.
+
+First, we need a place to hold cached data. We refer to this as the **pufs repo**. We create the repo with the "init" command. 
+
+Example: *Create an empty repo stored in ~/pufs-data*
+```
+pufs init ~/pufs-data
+```
+
+When creating a repo we can we want the contents of the root directory to include that from a location in google cloud storage. 
+
+Example: *Create an repo which mirrors a GCS path.* 
+
+In this example, we'll map the [Landsat data google hosts in GCS](https://cloud.google.com/storage/docs/public-datasets/landsat) to the root directory
 
 ```
-pufs init repo
-pufs add repo gs://...
-pufs mount repo ~/testmount
+pufs init ~/pufs-data --root gs://gcp-public-data-landsat/
 ```
+
+
 
 ```
 pufs init repo-a

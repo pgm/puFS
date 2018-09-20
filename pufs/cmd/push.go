@@ -37,7 +37,7 @@ to quickly create a Cobra application.`,
 		repoPath := args[0]
 		label := args[1]
 
-		ds := NewDataStore(repoPath, false)
+		ds := openDataStore(repoPath)
 		ctx := context.Background()
 		err := ds.Push(ctx, core.RootINode, label)
 		if err != nil {

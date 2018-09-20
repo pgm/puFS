@@ -2,6 +2,7 @@
   "links": [
     {"source": "gs://gcs-test-1136/benchmark-data/130mb", "path": "130mb"},
     {"source": "gs://genomics-public-data/1000-genomes/vcf/ALL.chr17.integrated_phase1_v3.20101123.snps_indels_svs.genotypes.vcf", "path": "chr17.vcf"},
-    {"source": "gs://genomics-public-data/1000-genomes/vcf/ALL.chrMT.phase1_samtools_si.20101123.snps.low_coverage.genotypes.vcf", "path": "chrMT.vcf"}
+    {"source": "gs://genomics-public-data/1000-genomes/vcf/ALL.chrMT.phase1_samtools_si.20101123.snps.low_coverage.genotypes.vcf", "path": "chrMT.vcf"},
+    {"source": "gs://gcp-public-data-landsat/", "path": "landsat"}
   ]
 }

@@ -35,7 +35,7 @@ to quickly create a Cobra application.`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		repoPath := args[0]
-		ds := NewDataStore(repoPath, false)
+		ds := openDataStore(repoPath)
 		defer ds.Close()
 
 		ctx := context.Background()

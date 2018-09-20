@@ -79,6 +79,7 @@ type FreezerImp struct {
 	pendingReads region.PendingReads
 
 	maxBackgroundTransfer int64
+	minUncommitted        int64
 
 	// used for heuristic detection/warning for file handle exhaustion
 	maxFd uint
@@ -222,6 +223,9 @@ func (w *FrozenRefImp) Release() {
 	}
 }
 
+const DefaultMaxBackgroundTransfer = 1024 * 1024 * 5
+const DefaultMinUncommitted = 1024 * 100
+
 func NewFreezer(path string, db KVStore, refFactory RemoteRefFactory2, chunkSize int, monitor Monitor) *FreezerImp {
 	chunkPath := path + "/chunks"
 	err := os.MkdirAll(chunkPath, 0700)
@@ -238,7 +242,8 @@ func NewFreezer(path string, db KVStore, refFactory RemoteRefFactory2, chunkSize
 		requestLatency:        NewPopulation(1000),
 		history:               make([]*CopyHistory, MaxHistoryLength),
 		monitor:               monitor,
-		maxBackgroundTransfer: 1024 * 1024 * 5}
+		maxBackgroundTransfer: DefaultMaxBackgroundTransfer,
+		minUncommitted:        DefaultMinUncommitted}
 }
 
 func (f *FreezerImp) GetBlockStats(BID BlockID, Size int64) (*BlockStats, error) {
@@ -571,7 +576,7 @@ func (f *FreezerImp) CopyFromRemote(ctx context.Context, BID BlockID, remote Rem
 	retryCount := 0
 	for {
 		log.Printf("freezer op %p: StartBackgroundCopy %d-%d started", ctx, start, end)
-		callStatus := regions.pending.StartBackgroundCopy(ctx, marker, remote, start, end, maxEnd, 1024*100, f.maxBackgroundTransfer, writer)
+		callStatus := regions.pending.StartBackgroundCopy(ctx, marker, remote, start, end, maxEnd, f.minUncommitted, f.maxBackgroundTransfer, writer)
 		err := callStatus.Wait()
 		log.Printf("freezer op %p: StartBackgroundCopy %d-%d completed, err=%v", ctx, start, end, err)
 		if err == nil {

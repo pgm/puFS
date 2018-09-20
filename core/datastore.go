@@ -57,11 +57,13 @@ func (d *DataStore) SetClients(networkClient NetworkClient) {
 }
 
 type DataStoreConfig struct {
-	chunkSize    int
-	rootBID      BlockID
-	rootBucket   string
-	rootKey      string
-	openExisting bool
+	chunkSize             int
+	rootBID               BlockID
+	rootBucket            string
+	rootKey               string
+	openExisting          bool
+	maxBackgroundTransfer int64
+	minUncommitted        int64
 }
 
 type DataStoreOption func(config *DataStoreConfig)
@@ -85,11 +87,26 @@ func OpenExisting() func(config *DataStoreConfig) {
 	}
 }
 
+func MaxBackgroundTransfer(length int64) func(config *DataStoreConfig) {
+	return func(config *DataStoreConfig) {
+		config.maxBackgroundTransfer = length
+	}
+}
+
+func MinUncommitted(length int64) func(config *DataStoreConfig) {
+	return func(config *DataStoreConfig) {
+		config.minUncommitted = length
+	}
+}
+
 func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory,
 	rrf2 RemoteRefFactory2, freezerKV KVStore,
 	nodeKV KVStore, options ...DataStoreOption) (*DataStore, error) {
 
-	config := DataStoreConfig{chunkSize: 200 * 1024, rootBID: NABlock}
+	config := DataStoreConfig{chunkSize: 200 * 1024,
+		rootBID:               NABlock,
+		minUncommitted:        DefaultMinUncommitted,
+		maxBackgroundTransfer: DefaultMaxBackgroundTransfer}
 	for _, option := range options {
 		option(&config)
 	}
@@ -97,7 +114,6 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory,
 	freezerPath := path.Join(storagePath, "freezer")
 	writablePath := path.Join(storagePath, "writable")
 	mountTablePath := path.Join(storagePath, "mounts.gob")
-	log.Printf("config.openExisting=%v", config.openExisting)
 	if config.openExisting {
 		if _, err := os.Stat(storagePath); os.IsNotExist(err) {
 			return nil, InvalidRepoErr
@@ -133,7 +149,7 @@ func NewDataStore(storagePath string, remoteRefFactory RemoteRefFactory,
 
 	var err error
 	rootBID := NABlock
-	log.Printf("openExisting=%v", config.openExisting)
+	// log.Printf("openExisting=%v", config.openExisting)
 	if !config.openExisting {
 		if config.rootBID != NABlock {
 			log.Printf("Adding BID root")
@@ -1284,13 +1300,13 @@ func (ds *DataStore) SplitPath(ctx context.Context, fullPath string) (INode, str
 }
 
 func (ds *DataStore) GetINodeForPath(ctx context.Context, Path string) (INode, error) {
-	log.Printf("GetINodeForPath: %s", Path)
+	// log.Printf("GetINodeForPath: %s", Path)
 	inode := INode(RootINode)
 	pathComponents := strings.Split(Path, "/")
 	for i := 0; i < len(pathComponents); i++ {
 		name := pathComponents[i]
 		nextNode, err := ds.GetNodeID(ctx, inode, name)
-		log.Printf("ds.GetNodeID(%d, %s) -> %d, %s", inode, name, nextNode, err)
+		// log.Printf("ds.GetNodeID(%d, %s) -> %d, %s", inode, name, nextNode, err)
 		if err != nil {
 			return InvalidINode, err
 		}

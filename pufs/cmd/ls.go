@@ -67,15 +67,15 @@ func fmtNum(v int64) string {
 
 var NotValidPufsPathErr = errors.New("Was not a path under a repo nor mountpoint")
 
-func findPufsRoot(longPath string) (infoPath string, remainingPath string, err error) {
+func findPufsRoot(longPath string) (repoPath string, remainingPath string, err error) {
 	remainingPath = "."
 	p := longPath
 	for {
 		canidatePath := path.Join(p, PufsInfoFilename)
-		log.Printf("Checking %s", canidatePath)
+		// log.Printf("Checking %s", canidatePath)
 		_, err := os.Stat(canidatePath)
 		if err == nil {
-			return canidatePath, remainingPath, nil
+			return p, remainingPath, nil
 		}
 
 		nextDir := path.Dir(p)
@@ -83,7 +83,7 @@ func findPufsRoot(longPath string) (infoPath string, remainingPath string, err e
 			return "", "", NotValidPufsPathErr
 		}
 
-		log.Printf("path.Join(path.Base(%s), %s)", p, remainingPath)
+		// log.Printf("path.Join(path.Base(%s), %s)", p, remainingPath)
 		remainingPath = path.Join(path.Base(p), remainingPath)
 		p = nextDir
 	}
@@ -103,17 +103,15 @@ var lsCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		dirPath := args[0]
 
-		infoPath, remainingPath, err := findPufsRoot(dirPath)
+		repoPath, remainingPath, err := findPufsRoot(dirPath)
 		if err != nil {
 			log.Fatalf("Could not find pufs repo: %s", err)
 		}
 
-		repoPath := path.Dir(infoPath)
-
 		//		fmt.Println("ls called")
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0) //tabwriter.AlignRight)
 
-		ds := NewDataStore(repoPath, false)
+		ds := openExistingDataStore(repoPath)
 		ctx := context.Background()
 		inode, err := ds.GetINodeForPath(ctx, remainingPath)
 		if err != nil {
