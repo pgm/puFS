@@ -5,9 +5,11 @@ install:
 - go get -u github.com/golang/dep/...
 - dep ensure
 script:
-- go test -v $(go list ./... | grep -v "/vendor/")
+# - go test -v $(go list ./... | grep -v "/vendor/")
+- ls -l
+- ls -l ${TRAVIS_BUILD_DIR}
 - mkdir dist
-- go build pufs/main.go -o dist/pufs
+- go build pufs/main.go -o dist/pufs-${TRAVIS_BUILD_NUMBER}
 deploy:
   provider: gcs
   access_key_id: GOOG557776BZ26MSVDGSVW5G
@@ -15,5 +17,6 @@ deploy:
     secure: SY8rVcmvi32qjkqQ6AUh6swOBkYhvAYriwN7Lsc2V9t21/MVW/trfAj5L6kaUpMLKBAmhZENITcJ3rxF6RPJdlBuRUM0JTi/w+JC7L95d0WNtL9Td41xC7E0OQod9YjqRIImNUhIm3LQ2Kgvn0VGP0mrDYfzY9WW3cdAON8cXoS6fYPOOBL5XiO4x3wU1QscL06sHufJ+UxYcQNJ5Vh69LdOD5faTkpce+TzwEAdqhqgTgCD1Vk/rnbYUYSECHis9GIsYFeGaeCjT8NsL9N4GD2U85Lp2AkvP4DFzMVEHHO8r0O56YEteJ8Qf6qMijthwULAajOPd4NZ+DYRehDa0PSnQyPHV0bpxb9dJkGeCbFJ7uRVmghVseqqzNwKUXdjtbFmyeix8MXjBiCPlkpYyeQT1C2+xgN4694qDg2sbjiOVZg6nq15LQfOQ2amdIr/PKn1G9ZdGDr/fRLTx1WrwsSWvQoy1uw+S7ymSy3TdZuyINvoEvoBwcClu67kmeuEutGkFfSnDXQxXxxy8Y1Ar5/1DJn3GMmth5Kp63102DcD0EUXQCRVtfV2zpMWjphX6M9d9EHG2bCU7wz5nghFmroDSCVEU2RVH6MAswId3Xoc7bJJpV2Uyd2/d4lPo48UIwtOVb07aX9tqGf5MgDMASBqrJ+y9INi6NqTR7MzJhU=
   bucket: pufs-files
   local-dir: dist
+  skip_cleanup: true
   on:
     repo: pgm/puFS
