@@ -5,11 +5,10 @@ install:
 - go get -u github.com/golang/dep/...
 - dep ensure
 script:
-# - go test -v $(go list ./... | grep -v "/vendor/")
-- ls -l
-- ls -l ${TRAVIS_BUILD_DIR}
+ - go test -v $(go list ./... | grep -v "/vendor/")
 - mkdir dist
-- go build pufs/main.go -o dist/pufs-${TRAVIS_BUILD_NUMBER}
+- pwd
+- go build -o dist/pufs-${TRAVIS_BUILD_NUMBER} pufs/main.go
 deploy:
   provider: gcs
   access_key_id: GOOG557776BZ26MSVDGSVW5G
