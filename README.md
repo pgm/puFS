@@ -1,4 +1,4 @@
-# pufs [![Build Status](https://travis-ci.org/pgm/sply2.svg?branch=master)](https://travis-ci.org/pgm/sply2)
+# pufs [![Build Status](https://travis-ci.org/pgm/puFS.svg?branch=master)](https://travis-ci.org/pgm/puFS)
 
 **pufs** is an experiment in creating a service to help bridge software which assumes data is accessible on the filesystem and remote object stores such as S3 and GCS.
 
