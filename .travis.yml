@@ -1,16 +1,13 @@
 language: go
 go:
 - 1.11
-#install:
-# - go get -u github.com/golang/dep/...
-# - dep ensure
+install:
+ - go get -u github.com/golang/dep/...
+ - dep ensure
 script:
  - go test -v $(go list ./... | grep -v "/vendor/")
  - mkdir dist
- - pwd
-# - go build -o dist/pufs-${TRAVIS_BUILD_NUMBER} pufs/main.go
- - touch dist/pufs-${TRAVIS_BUILD_NUMBER}
- - ls -l dist
+ - go build -o dist/pufs-`uname`-`uname -m`-${TRAVIS_BUILD_NUMBER} pufs/main.go
 deploy:
   provider: gcs
   access_key_id: GOOG557776BZ26MSVDGSVW5G
