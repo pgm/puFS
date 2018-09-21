@@ -101,7 +101,12 @@ func (c *ClientWrapper) GetDirContents(ctx context.Context, in *api.DirContentsR
 	return c.s.GetDirContents(ctx, in)
 }
 
-func getRepoClient(socketAddress string, repoPath string) api.PufsClient {
+func getRepoClient(repoPath string) api.PufsClient {
+	socketAddress := getSocketAddress(repoPath)
+	return attemptConnect(socketAddress, repoPath)
+}
+
+func attemptConnect(socketAddress string, repoPath string) api.PufsClient {
 	_, err := os.Stat(socketAddress)
 	if err == nil {
 		// the socket exists, so connect and use that as the client
@@ -119,6 +124,7 @@ func getRepoClient(socketAddress string, repoPath string) api.PufsClient {
 		return client
 	} else {
 		// okay, open directly
+		log.Printf("opening data store directly")
 		ds, _ := openExistingDataStore(repoPath)
 		localService := &apiService{ds}
 		return &ClientWrapper{localService}
@@ -144,9 +150,7 @@ var lsCmd = &cobra.Command{
 			log.Fatalf("Could not find pufs repo: %s", err)
 		}
 
-		repoInfo := loadRepoInfo(repoPath)
-
-		client := getRepoClient(repoInfo.socketAddress, repoPath)
+		client := getRepoClient(repoPath)
 
 		ctx := context.Background()
 		resp, err := client.GetDirContents(ctx, &api.DirContentsRequest{Path: remainingPath})

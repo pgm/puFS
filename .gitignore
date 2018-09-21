@@ -17,3 +17,8 @@ chunks
 
 .DS_Store
 *~
+pufs/mount.log
+pufs/pufs
+benchmark/rand-test-data/50mb
+benchmark/b/50mb
+*.log

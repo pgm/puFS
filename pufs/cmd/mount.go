@@ -167,11 +167,17 @@ func (s *apiService) GetDirContents(ctx context.Context, req *api.DirContentsReq
 // }
 
 type repoInfo struct {
+	socketAddress         string
 	credentialsPath       string
 	bucketName            string
 	keyPrefix             string
 	maxBackgroundTransfer int
-	socketAddress         string
+}
+
+func getSocketAddress(dir string) string {
+	pufsInfoPath := path.Join(dir, PufsInfoFilename)
+	p := properties.MustLoadFile(pufsInfoPath, properties.UTF8)
+	return p.MustGetString("socketAddress")
 }
 
 func loadRepoInfo(dir string) *repoInfo {

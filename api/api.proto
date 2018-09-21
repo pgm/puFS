@@ -1,0 +1,28 @@
+syntax = "proto3";
+package api;
+
+message DirContentsRequest {
+   string path = 1;
+}
+
+
+message DirContentsResponse {
+  message Entry {
+    int64 ID  = 1;
+    string name = 2;
+    bool isDirty  = 3;
+    bool isDir  = 4;
+    int64 size  = 5;
+    int64 modTimeSeconds  = 6;
+    bytes blockID  = 7;
+    int32 populatedRegionCount  = 8;
+    int64 populatedSize  = 9;
+  }
+
+  repeated Entry entries  = 10;
+  string errorMsg  = 11;
+}
+
+service Pufs {
+  rpc GetDirContents(DirContentsRequest) returns (DirContentsResponse) {}
+}
