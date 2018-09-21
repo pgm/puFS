@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/gob"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -111,6 +112,7 @@ type apiService struct {
 }
 
 func (s *apiService) GetDirContents(ctx context.Context, req *api.DirContentsRequest) (*api.DirContentsResponse, error) {
+	fmt.Printf("GetDirContents\n")
 	inode, err := s.ds.GetINodeForPath(ctx, req.Path)
 	if err != nil {
 		return &api.DirContentsResponse{ErrorMsg: err.Error()}, nil

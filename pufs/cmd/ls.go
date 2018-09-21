@@ -20,13 +20,17 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"path"
 	"strings"
 	"text/tabwriter"
+	"time"
 
+	"github.com/pgm/sply2/api"
 	"github.com/pgm/sply2/core"
 	"github.com/spf13/cobra"
+	"google.golang.org/grpc"
 )
 
 func boolToStr(b bool, t string, f string) string {
@@ -89,6 +93,38 @@ func findPufsRoot(longPath string) (repoPath string, remainingPath string, err e
 	}
 }
 
+type ClientWrapper struct {
+	s api.PufsServer
+}
+
+func (c *ClientWrapper) GetDirContents(ctx context.Context, in *api.DirContentsRequest, opts ...grpc.CallOption) (*api.DirContentsResponse, error) {
+	return c.s.GetDirContents(ctx, in)
+}
+
+func getRepoClient(socketAddress string, repoPath string) api.PufsClient {
+	_, err := os.Stat(socketAddress)
+	if err == nil {
+		// the socket exists, so connect and use that as the client
+		log.Printf("socketAddress=%s", socketAddress)
+		conn, err := grpc.Dial(socketAddress, grpc.WithInsecure(), grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
+			return net.DialTimeout("unix", addr, timeout)
+		}))
+		if err != nil {
+			log.Fatalf("Could not connect to pufs service: %s", err)
+		}
+		client := api.NewPufsClient(conn)
+
+		// TODO: try sending a ping to make sure service is up.
+		// if not, shut down the client and delete the stale socket
+		return client
+	} else {
+		// okay, open directly
+		ds, _ := openExistingDataStore(repoPath)
+		localService := &apiService{ds}
+		return &ClientWrapper{localService}
+	}
+}
+
 // lsCmd represents the ls command
 var lsCmd = &cobra.Command{
 	Use:   "ls",
@@ -108,59 +144,72 @@ var lsCmd = &cobra.Command{
 			log.Fatalf("Could not find pufs repo: %s", err)
 		}
 
+		repoInfo := loadRepoInfo(repoPath)
+
+		client := getRepoClient(repoInfo.socketAddress, repoPath)
+
+		ctx := context.Background()
+		resp, err := client.GetDirContents(ctx, &api.DirContentsRequest{Path: remainingPath})
+		if err != nil {
+			log.Fatalf("Error calling client: %s", err)
+		}
 		//		fmt.Println("ls called")
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0) //tabwriter.AlignRight)
 
-		ds, _ := openExistingDataStore(repoPath)
-		ctx := context.Background()
-		inode, err := ds.GetINodeForPath(ctx, remainingPath)
-		if err != nil {
-			log.Fatalf("Could not look up %s: %s", dirPath, err)
-		}
-		entries, err := ds.GetExtendedDirContents(ctx, inode)
-		if err != nil {
-			log.Fatalf("Could not list dir %s: %s", dirPath, err)
-		}
+		// inode, err := ds.GetINodeForPath(ctx, remainingPath)
+		// if err != nil {
+		// 	log.Fatalf("Could not look up %s: %s", dirPath, err)
+		// }
+		// entries, err := ds.GetExtendedDirContents(ctx, inode)
+		// if err != nil {
+		// 	log.Fatalf("Could not list dir %s: %s", dirPath, err)
+		// }
 
 		columns := []string{"Dirty", "Name", "Size", "PopCnt", "PopSize", "BlockID"}
 		//		columns := []string{"Dirty", "Name", "BlockID", "URL", "Size", "PopCnt", "PopSize"}
 		fmt.Fprintln(w, strings.Join(columns, "\t"))
 
-		colMapFuns := make(map[string]func(*core.ExtendedDirEntry) string)
-		colMapFuns["Dirty"] = func(e *core.ExtendedDirEntry) string {
+		colMapFuns := make(map[string]func(*api.DirContentsResponse_Entry) string)
+		colMapFuns["Dirty"] = func(e *api.DirContentsResponse_Entry) string {
 			return boolToStr(e.IsDirty, "*", "-")
 		}
-		colMapFuns["Name"] = func(e *core.ExtendedDirEntry) string {
+		colMapFuns["Name"] = func(e *api.DirContentsResponse_Entry) string {
 			return e.Name
 		}
-		colMapFuns["BlockID"] = func(e *core.ExtendedDirEntry) string {
-			if e.BID == core.NABlock {
+		colMapFuns["BlockID"] = func(e *api.DirContentsResponse_Entry) string {
+			var BID core.BlockID
+			copy(BID[:], e.BlockID)
+			if BID == core.NABlock {
 				return "<NA>"
 			}
-			return base64x(e.BID)
+			return base64x(BID)
 		}
-		colMapFuns["URL"] = func(e *core.ExtendedDirEntry) string {
-			url := ""
-			if e.RemoteSource != nil {
-				source, ok := e.RemoteSource.(*core.GCSObjectSource)
-				if !ok {
-					panic("Could not cast")
-				}
-				url = fmt.Sprintf("gs://%s/%s", source.Bucket, source.Key)
-			}
-			return url
+		colMapFuns["URL"] = func(e *api.DirContentsResponse_Entry) string {
+			return "unimp"
+			// url := ""
+			// if e.RemoteSource != nil {
+			// 	source, ok := e.RemoteSource.(*api.GCSObjectSource)
+			// 	if !ok {
+			// 		panic("Could not cast")
+			// 	}
+			// 	url = fmt.Sprintf("gs://%s/%s", source.Bucket, source.Key)
+			// }
+			// return url
 		}
-		colMapFuns["Size"] = func(e *core.ExtendedDirEntry) string {
+		colMapFuns["Size"] = func(e *api.DirContentsResponse_Entry) string {
 			return fmtNum(e.Size)
 		}
-		colMapFuns["PopCnt"] = func(e *core.ExtendedDirEntry) string {
+		colMapFuns["PopCnt"] = func(e *api.DirContentsResponse_Entry) string {
 			return fmtNum(int64(e.PopulatedRegionCount))
 		}
-		colMapFuns["PopSize"] = func(e *core.ExtendedDirEntry) string {
+		colMapFuns["PopSize"] = func(e *api.DirContentsResponse_Entry) string {
 			return fmtNum(e.PopulatedSize)
 		}
 
-		for _, e := range entries {
+		if resp.ErrorMsg != "" {
+			log.Fatalf("Got error: %s", resp.ErrorMsg)
+		}
+		for _, e := range resp.Entries {
 			row := make([]string, len(columns))
 
 			for i, name := range columns {
