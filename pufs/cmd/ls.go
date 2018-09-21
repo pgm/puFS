@@ -111,7 +111,7 @@ var lsCmd = &cobra.Command{
 		//		fmt.Println("ls called")
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0) //tabwriter.AlignRight)
 
-		ds := openExistingDataStore(repoPath)
+		ds, _ := openExistingDataStore(repoPath)
 		ctx := context.Background()
 		inode, err := ds.GetINodeForPath(ctx, remainingPath)
 		if err != nil {

@@ -125,7 +125,7 @@ to quickly create a Cobra application.`,
 			log.Fatalf("Could not parse GCS path: %s", destination)
 		}
 
-		ds := openExistingDataStore(repoPath)
+		ds, _ := openExistingDataStore(repoPath)
 		ctx := context.Background()
 
 		client, err := storage.NewClient(ctx, option.WithServiceAccountFile(credentialsPath))

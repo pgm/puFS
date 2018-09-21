@@ -146,6 +146,10 @@ func createDataStore(dir string, mountAsRoot string, credentialsPath string, buc
 	}
 	socketAddress := socketFile.Name()
 	socketFile.Close()
+	err = os.Remove(socketFile.Name())
+	if err != nil {
+		log.Fatalf("Could not remove in temp dir: %s", err)
+	}
 
 	if _, err = os.Stat(dir); os.IsNotExist(err) {
 		err = os.MkdirAll(dir, 0700)
@@ -208,7 +212,7 @@ func createDataStore(dir string, mountAsRoot string, credentialsPath string, buc
 		}
 	}
 
-	ds := openDataStore(dir, dsOptions...)
+	ds, _ := openDataStore(dir, dsOptions...)
 
 	ctx := context.Background()
 	mountConfigStr := fmt.Sprintf("type=mount\n"+

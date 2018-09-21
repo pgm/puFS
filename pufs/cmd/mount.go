@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"io"
 	"log"
+	"net"
 	"os"
 	"path"
 	"regexp"
@@ -15,10 +16,12 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/pgm/sply2"
+	"github.com/pgm/sply2/api"
 	"github.com/pgm/sply2/core"
 	"github.com/pgm/sply2/fs"
 	"github.com/pgm/sply2/remote"
 	"google.golang.org/api/option"
+	"google.golang.org/grpc"
 
 	"github.com/spf13/cobra"
 )
@@ -56,7 +59,7 @@ var mountCmd = &cobra.Command{
 			}
 		}
 
-		ds := openExistingDataStore(repoPath)
+		ds, repoInfo := openExistingDataStore(repoPath)
 
 		ticker := time.NewTicker(5 * time.Second)
 
@@ -70,6 +73,15 @@ var mountCmd = &cobra.Command{
 				}
 			}
 		})()
+
+		lis, err := net.Listen("unix", repoInfo.socketAddress)
+		if err != nil {
+			log.Fatalf("failed to listen: %v", err)
+		}
+
+		grpcServer := grpc.NewServer()
+		api.RegisterPufsServer(grpcServer, &apiService{ds: ds})
+		go grpcServer.Serve(lis)
 
 		fs.Mount(mountPoint, ds)
 		ticker.Stop()
@@ -92,6 +104,38 @@ func init() {
 	// Cobra supports local flags which will only run when this command
 	// is called directly, e.g.:
 	// mountCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+}
+
+type apiService struct {
+	ds *core.DataStore
+}
+
+func (s *apiService) GetDirContents(ctx context.Context, req *api.DirContentsRequest) (*api.DirContentsResponse, error) {
+	inode, err := s.ds.GetINodeForPath(ctx, req.Path)
+	if err != nil {
+		return &api.DirContentsResponse{ErrorMsg: err.Error()}, nil
+	}
+
+	srcEntries, err := s.ds.GetExtendedDirContents(ctx, inode)
+	if err != nil {
+		return &api.DirContentsResponse{ErrorMsg: err.Error()}, nil
+	}
+
+	dstEntries := make([]*api.DirContentsResponse_Entry, len(srcEntries))
+	for i, src := range srcEntries {
+		dstEntries[i] = &api.DirContentsResponse_Entry{
+			ID:                   int64(src.ID),
+			Name:                 src.Name,
+			IsDirty:              src.IsDirty,
+			IsDir:                src.IsDir,
+			Size:                 src.Size,
+			ModTimeSeconds:       src.ModTime.Unix(),
+			BlockID:              src.BID[:],
+			PopulatedRegionCount: int32(src.PopulatedRegionCount),
+			PopulatedSize:        src.PopulatedSize}
+	}
+
+	return &api.DirContentsResponse{Entries: dstEntries}, nil
 }
 
 // type NewDataStoreOptions struct {
@@ -144,11 +188,11 @@ func loadRepoInfo(dir string) *repoInfo {
 
 	// panic("")
 }
-func openExistingDataStore(dir string) *core.DataStore {
+func openExistingDataStore(dir string) (*core.DataStore, *repoInfo) {
 	return openDataStore(dir, core.OpenExisting())
 }
 
-func openDataStore(dir string, dsOptions ...core.DataStoreOption) *core.DataStore {
+func openDataStore(dir string, dsOptions ...core.DataStoreOption) (*core.DataStore, *repoInfo) {
 
 	repoInfo := loadRepoInfo(dir)
 
@@ -176,7 +220,7 @@ func openDataStore(dir string, dsOptions ...core.DataStoreOption) *core.DataStor
 
 	ds.SetClients(remoteRefFactory)
 
-	return ds
+	return ds, repoInfo
 
 }
 
