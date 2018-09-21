@@ -208,5 +208,22 @@ func createDataStore(dir string, mountAsRoot string, credentialsPath string, buc
 		}
 	}
 
-	return openDataStore(dir, dsOptions...)
+	ds := openDataStore(dir, dsOptions...)
+
+	ctx := context.Background()
+	mountConfigStr := fmt.Sprintf("type=mount\n"+
+		"socketAddress=%s\n",
+		socketAddress)
+
+	pufsDirInode, err := ds.MakeDir(ctx, core.RootINode, ".pufs")
+	if err != nil {
+		log.Fatalf("Could not create .pufs directory in mount: %s", err)
+	}
+
+	_, err = ds.AddImmutableBytes(ctx, pufsDirInode, "info", []byte(mountConfigStr))
+	if err != nil {
+		log.Fatalf("Could not create .pufs/info in mount: %s", err)
+	}
+
+	return ds
 }

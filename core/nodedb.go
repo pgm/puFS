@@ -634,6 +634,39 @@ func addRemoteGCS(tx RWTx, parentINode INode, inode INode, bucket string, key st
 		IsDeferredChildFetch: isDir})
 }
 
+func addImmutableData(tx RWTx, parentINode INode, inode INode, size int64, modTime time.Time, BID BlockID) error {
+	return putNodeRepr(tx, inode, &NodeRepr{
+		ParentINode: parentINode,
+		IsDir:       false,
+		IsDirty:     false,
+		Size:        size,
+		ModTime:     modTime,
+		BID:         BID})
+}
+
+func (db *INodeDB) AddImmutableData(tx RWTx, parent INode, name string, size int64, modTime time.Time, BID BlockID) (INode, error) {
+	err := assertValidDirWillMutate(tx, parent)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	id, err := db.getNextFreeInode(tx)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	err = addImmutableData(tx, parent, id, size, modTime, BID)
+	if err != nil {
+		return InvalidINode, err
+	}
+	err = addChild(tx, parent, id, name)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	return id, nil
+}
+
 func (db *INodeDB) AddRemoteURL(tx RWTx, parent INode, name string, url string, etag string, size int64, ModTime time.Time) (INode, error) {
 	err := assertValidDirWillMutate(tx, parent)
 	if err != nil {

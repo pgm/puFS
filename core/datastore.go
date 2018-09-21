@@ -856,6 +856,59 @@ func (d *DataStore) Remove(ctx context.Context, parent INode, name string) error
 	return err
 }
 
+func writeTmpFile(data []byte) (string, error) {
+	f, err := ioutil.TempFile("", "pufs")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	tmpName := f.Name()
+
+	_, err = f.Write(data)
+	if err != nil {
+		return "", err
+	}
+	return tmpName, nil
+}
+
+func (d *DataStore) AddImmutableBytes(ctx context.Context, parent INode, name string, data []byte) (INode, error) {
+	var inode INode
+	var err error
+
+	err = validateName(name)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	modTime := time.Now()
+
+	tmpName, err := writeTmpFile(data)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	newBlock, err := d.freezer.AddFile(tmpName)
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	err = d.updateAfterLoadLazyChildren(ctx, parent, func(tx RWTx) error {
+		inode, err = d.db.AddImmutableData(tx, parent, name, int64(len(data)), modTime, newBlock.BID)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return InvalidINode, err
+	}
+
+	return inode, err
+
+}
+
 func (d *DataStore) AddRemoteURL(ctx context.Context, parent INode, name string, URL string) (INode, error) {
 	var inode INode
 	var err error
