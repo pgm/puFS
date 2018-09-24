@@ -127,19 +127,38 @@ Now when we mount `~/pufs-data`, we will see two files in the mounted directory:
 
 ## Command reference
 
+# Create a repo
+
 ```
 $ pufs init <new-repo-path> --creds key.json [--map mapping.json]
 ```
 
+# Mount a repo
 
 ``` 
 $ pufs mount <repo-path> <mount-point>
 ```
 
+# list files in repo
+
 ```
 $ pufs ls <path>
 ```
-path can either be routed at either the mount-point or the repo-path
+List the contents of a directory, showing extended properties that are specific to pufs. (ie: # of regions in file are populated, that is to say, have been downloaded and are stored locally and the total size of all of those regions)
+
+The "path" must be a directory inside of the pufs repo. If the pufs repo is stored at ~/pufs-data and not mounted, than you can look inside the repo to see a directory named "a/deeply/nested/example" by executing:
+
+```
+pufs ls ~/pufs-data/a/deeply/nested/example
+```
+
+In that example, we are peeking into the repo without mounting it. However, if ~/pufs-data is already mounted at ~/pufs-mount we can get the same listing by executing:
+
+```
+pufs ls ~/pufs-mount/a/deeply/nested/example
+```
+
+# Upload locally stored files
 
 ```
 $ pufs upload <repo-path> <gcs-prefix>
