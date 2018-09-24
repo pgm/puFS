@@ -124,3 +124,23 @@ $ pufs init ~/pufs-data --creds key.json --map files.json
 
 Now when we mount `~/pufs-data`, we will see two files in the mounted directory: `chr17.vcf` and `chrMT.vcf`. We can completely rearrange the organization of the folder by mapping in objects across GCS regardless of bucket or key.
 
+
+## Command reference
+
+```
+$ pufs init <new-repo-path> --creds key.json [--map mapping.json]
+```
+
+
+``` 
+$ pufs mount <repo-path> <mount-point>
+```
+
+```
+$ pufs ls <path>
+```
+path can either be routed at either the mount-point or the repo-path
+
+```
+$ pufs upload <repo-path> <gcs-prefix>
+```
